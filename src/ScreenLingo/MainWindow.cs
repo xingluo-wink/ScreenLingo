@@ -18,7 +18,7 @@ public sealed class MainWindow:Window
  {
   app=application;Title="屏译 ScreenLingo";Width=920;Height=Math.Min(850,SystemParameters.WorkArea.Height-50);MinWidth=760;MinHeight=580;WindowStartupLocation=WindowStartupLocation.CenterScreen;
   var root=new Grid{Margin=new Thickness(28,22,28,18)};root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new());root.RowDefinitions.Add(new(){Height=GridLength.Auto});Content=root;
-  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.1.2  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
+  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.2.0  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
   var brand=new StackPanel();brand.Children.Add(Ui.Text("屏译  ScreenLingo",27));brand.Children.Add(Ui.Text("框选眼前的内容，用熟悉的语言阅读。",12,Ui.Muted));heading.Children.Add(brand);root.Children.Add(heading);
   var hero=new DockPanel();var capture=Ui.Btn("＋  框选屏幕",()=>app.BeginCapture(),true);capture.MinWidth=155;capture.FontSize=15;DockPanel.SetDock(capture,Dock.Right);hero.Children.Add(capture);
   var introduction=new StackPanel();introduction.Children.Add(Ui.Text("随时框选，即刻开始",16));introduction.Children.Add(Ui.Text("中文 / English · 中英双语 · 字号可调 · 截图独立保存",12,Ui.Muted));hero.Children.Add(introduction);
@@ -76,11 +76,12 @@ public sealed class MainWindow:Window
   var panel=new StackPanel{Margin=new Thickness(26)};
   foreach(var(title,body)in new[]{
    ("01  框选屏幕","按快捷键或点击「框选屏幕」，拖动选择范围，松开完成。Esc 随时退出。"),
-   ("02  选择目标语言","点击「中文」或「English」。本地 OCR 自动识别中英文；没有配置 API 时仍可查看和复制原文。"),
-   ("03  在原文与译文间切换","译文默认在自动扩大的阅读窗口中完整呈现。按住空格临时看原图，松开恢复；点击「原位 / 阅读」可切换覆盖显示。内容超过屏幕容纳范围时才需要滚动。"),
-   ("字号与中英双语","选区工具条中的「阅读字号」可选 12–40，立即生效并自动记住。勾选「中英双语」后，左边显示中文、右边显示英文；已有译文会复用，只补充缺少的语言。双语使用完整阅读视图，字号和换行也会用于保存的译图。"),
-   ("键盘操作","选区中按 C 翻成中文、E 翻成英文、O 切换原图、R 切换阅读视图；Ctrl+S 保存原图，Ctrl+Shift+S 保存译图。"),
-   ("04  保存是独立操作","「保存原图」保存所选截图；阅读视图的「保存译图」保存全部文字，含滚动区域外的内容。「复制中英对照」可一次复制两种语言。"),
+   ("02  选择阅读模式","点击「中文」「English」或「双语」，当前模式会高亮。翻译等待期间仍可阅读识别原文；已完成译文会复用，重试只补充缺失内容。"),
+   ("03  自由调整窗口","拖动系统标题栏移动窗口，拖动边缘调整大小，尺寸会记住。工具条与正文一起移动；更新译文和调整字号不会重置手动位置。更多菜单提供置顶开关和「窗口适应内容」。"),
+   ("字号与中英双语","使用 A− / A＋ 或字号菜单选择 12–40；正文上 Ctrl+滚轮也可调整。双语默认逐段英文在上、中文在下；更多菜单可选宽窗口左右对照，窄窗口或大字时自动改为上下对照。正文可以跨段划选复制，单击不会弹出新窗口。"),
+   ("原图和原图布局","点击「原图」或按住空格查看截图，阅读窗口的位置与大小保持不变。「更多 → 原图布局预览」按截图排字；放不下完整译文时会保留完整阅读。"),
+   ("键盘操作","C 中文、E 英文、B 双语、O 切换原图、R 返回正文；Ctrl+C 复制选中文字或正文；Ctrl+S 保存原图，Ctrl+Shift+S 保存完整译图；Esc 关闭窗口。"),
+   ("04  保存是独立操作","「更多 → 保存原图」保存所选截图；「保存完整译图」保存全部文字，含滚动区域外的内容，并保留字号及双语排版。"),
    ("05  固定的是这一刻的画面","译文层不会跟随底层网页滚动。退出后重新框选即可。受保护的视频、系统安全桌面和独占全屏程序可能无法截取。"),
    ("API 地址提示","Chat / Responses / Anthropic 通常填含 /v1 的地址；Gemini 通常含 /v1beta。HTTP 仅限 localhost。本工具不附带任何 API 额度。")})
   {var h=Ui.Text(title,15);h.Margin=new Thickness(0,0,0,6);panel.Children.Add(h);var b=Ui.Text(body,13,Ui.Muted);b.Margin=new Thickness(0,0,0,20);panel.Children.Add(b);}

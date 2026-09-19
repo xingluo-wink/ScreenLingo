@@ -1,5 +1,13 @@
 # Verification notes
 
+## v0.2.0
+
+25 reader checks and 21 core/protocol checks passed. The reader scenarios create real WPF windows with fixed OCR data and an injected local HTTP handler. They cover native caption/resize configuration, manual placement retention, selectable cross-paragraph text, selection and scroll retention, single/dual-language caching, duplicate clicks, cancellation with partial-result retry, stale-response rejection, close during translation, original-layout overflow fallback, long-document export, and responsive bilingual layout. Stacked, two-column and font-40 renders were inspected.
+
+The reader windows in these checks are transparent and controlled by the test harness; these checks do not claim a new physical mouse-drag or mixed-monitor desktop interaction test. The negative-origin/mixed-DPI placement case is a geometry test. Commercial APIs were not contacted. The OCR engine and models are unchanged from the baseline below.
+
+Run `dotnet run --project src/ScreenLingo.Tests -c Release -- <project-root> --reader-layout` for reader scenarios and `--core-only` for core/protocol checks. Test responses and fixtures contain no user screenshots or credentials.
+
 ## v0.1.2
 
 13 focused checks passed for reader sizing, complete side-by-side Chinese/English content, font enlargement, scrollbar-free display of short text, full-height image export, bilingual copying, missing-language placeholders, settings migration and font bounds. A 32-size bilingual image was rendered and inspected. These checks used fixed sample text and no external API calls. The new controls and real-provider translation are left for user testing.

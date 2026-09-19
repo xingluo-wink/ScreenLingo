@@ -19,5 +19,9 @@
   "LastTarget": "zh",
   "ScreenshotDirectory": "",
   "ReadingFontSize": 16,
-  "BilingualDisplay": false
+  "BilingualDisplay": false,
+  "BilingualSideBySide": false,
+  "ReaderTopmost": true,
+  "ReaderWidth": 0,
+  "ReaderHeight": 0
 }

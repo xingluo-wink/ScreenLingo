@@ -4,6 +4,8 @@ using System.Windows.Input;
 namespace ScreenLingo;
 public static class Native
 {
+ [StructLayout(LayoutKind.Sequential)]struct WindowRect{public int Left,Top,Right,Bottom;}
+ [DllImport("user32.dll",SetLastError=true)]static extern bool GetWindowRect(IntPtr hwnd,out WindowRect rect);
  [StructLayout(LayoutKind.Sequential)]public struct PixelPoint{public int X,Y;}
  [DllImport("user32.dll")]public static extern bool GetCursorPos(out PixelPoint point);
  [DllImport("user32.dll")]public static extern int GetSystemMetrics(int index);
@@ -11,6 +13,12 @@ public static class Native
  [DllImport("user32.dll")]static extern bool UnregisterHotKey(IntPtr window,int id);
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
  public static void Place(Window window,int x,int y,int width,int height)=>SetWindowPos(new WindowInteropHelper(window).Handle,new IntPtr(-1),x,y,width,height,0x0010);
+ public static void PlaceReader(Window window,System.Drawing.Rectangle bounds)=>SetWindowPos(new WindowInteropHelper(window).Handle,IntPtr.Zero,bounds.X,bounds.Y,bounds.Width,bounds.Height,0x0014);
+ public static System.Drawing.Rectangle ReaderBounds(Window window)
+ {
+  if(!GetWindowRect(new WindowInteropHelper(window).Handle,out var r))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+  return System.Drawing.Rectangle.FromLTRB(r.Left,r.Top,r.Right,r.Bottom);
+ }
  public static System.Drawing.Rectangle DesktopBounds=>new(GetSystemMetrics(76),GetSystemMetrics(77),GetSystemMetrics(78),GetSystemMetrics(79));
  public static (uint Modifiers,uint Key) ParseHotkey(string value)
  {

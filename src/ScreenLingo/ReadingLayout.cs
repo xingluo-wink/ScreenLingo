@@ -2,26 +2,21 @@ namespace ScreenLingo;
 
 public static class ReadingLayout
 {
- // Width and text measurement are in WPF units; the returned placement uses
- // physical screen pixels. The screenshot rectangle is only an anchor.
- public static System.Drawing.Rectangle Fit(System.Drawing.Rectangle selection,System.Drawing.Rectangle screen,
-  double scaleX,double scaleY,int toolbarHeight,Func<double,double> measureContent,bool bilingual=false)
+ public static System.Drawing.Rectangle Initial(System.Drawing.Rectangle selection,System.Drawing.Rectangle screen,
+  double scaleX,double scaleY,double savedWidth,double savedHeight,bool columns)
  {
-  int margin=12,gap=8;
-  double maxWidth=Math.Max(1,(screen.Width-margin*2)/scaleX);
-  double maxHeight=Math.Max(1,(screen.Height-toolbarHeight-gap-margin*2)/scaleY);
-  double width=Math.Min(maxWidth,Math.Clamp(selection.Width/scaleX,bilingual?760:420,bilingual?960:760));
-  double height=measureContent(Math.Max(1,width-28))+28;
-  while(height>maxHeight && width<Math.Min(maxWidth,960))
-  {
-   width=Math.Min(Math.Min(maxWidth,960),width+120);
-   height=measureContent(Math.Max(1,width-28))+28;
-  }
-  int w=Math.Min(screen.Width-margin*2,(int)Math.Ceiling(width*scaleX));
-  int h=(int)Math.Ceiling(Math.Min(maxHeight,Math.Max(92,height))*scaleY);
-  int x=Math.Clamp(selection.Left,screen.Left+margin,Math.Max(screen.Left+margin,screen.Right-margin-w));
-  int top=screen.Top+margin+toolbarHeight+gap;
-  int y=Math.Clamp(selection.Top,top,Math.Max(top,screen.Bottom-margin-h));
-  return new(x,y,w,h);
+  double width=savedWidth>0?savedWidth:Math.Clamp(selection.Width/scaleX+48,columns?780:600,columns?980:840);
+  double height=savedHeight>0?savedHeight:Math.Clamp(selection.Height/scaleY+160,340,640);
+  double maxWidth=Math.Max(1,(screen.Width-24)/scaleX),maxHeight=Math.Max(1,(screen.Height-24)/scaleY);
+  width=Math.Clamp(width,Math.Min(540,maxWidth),maxWidth);height=Math.Clamp(height,Math.Min(230,maxHeight),maxHeight);
+  return Constrain(new(selection.Left,selection.Top,(int)Math.Ceiling(width*scaleX),(int)Math.Ceiling(height*scaleY)),screen);
  }
+ public static System.Drawing.Rectangle Constrain(System.Drawing.Rectangle bounds,System.Drawing.Rectangle screen)
+ {
+  int margin=Math.Min(12,Math.Max(0,Math.Min(screen.Width,screen.Height)/8));
+  int width=Math.Clamp(bounds.Width,1,Math.Max(1,screen.Width-2*margin)),height=Math.Clamp(bounds.Height,1,Math.Max(1,screen.Height-2*margin));
+  int x=Math.Clamp(bounds.Left,screen.Left+margin,Math.Max(screen.Left+margin,screen.Right-margin-width));
+  int y=Math.Clamp(bounds.Top,screen.Top+margin,Math.Max(screen.Top+margin,screen.Bottom-margin-height));return new(x,y,width,height);
+ }
+ public static bool UseColumns(bool requested,double contentWidth,int fontSize)=>requested&&contentWidth>=Math.Max(660,fontSize*25);
 }

@@ -12,10 +12,10 @@ internal static class Program
   catch(Exception ex){MessageBox.Show("屏译启动失败：\n"+ex.Message,"ScreenLingo",MessageBoxButton.OK,MessageBoxImage.Error);}
  }
 }
-public sealed class ScreenApp:Application
+public sealed class ScreenApp:Application,IReaderHost
 {
  public SettingsStore Store{get;}public AppSettings Settings{get;}public OcrClient Ocr{get;}=new();public bool Quitting{get;private set;}
- Native.Hotkey? hotkey;Forms.NotifyIcon? tray;MainWindow? settingsWindow;OverlayWindow? overlay;SelectionWindow? selector;
+ Native.Hotkey? hotkey;Forms.NotifyIcon? tray;MainWindow? settingsWindow;OverlayWindow? overlay;SelectionWindow? selector;bool capturing;
  readonly Mutex instance;readonly EventWaitHandle wake;RegisteredWaitHandle? wakeRegistration;bool ownsInstance;readonly string[] arguments;
  public ScreenApp(string? data,string[] args)
  {
@@ -36,20 +36,28 @@ public sealed class ScreenApp:Application
   int imageIndex=Array.IndexOf(arguments,"--image");
   if(imageIndex>=0&&imageIndex+1<arguments.Length)OpenImage(arguments[imageIndex+1]);else ShowSettings();
  }
- public void ShowSettings(){if(settingsWindow is null){settingsWindow=new MainWindow(this);settingsWindow.Closed+=(sender,_)=>{if(ReferenceEquals(MainWindow,sender))MainWindow=null;settingsWindow=null;ScheduleCollection();};}settingsWindow.Show();settingsWindow.WindowState=WindowState.Normal;settingsWindow.Activate();}
+ public void ShowSettings()
+ {
+  if(settingsWindow is null){settingsWindow=new MainWindow(this);settingsWindow.Closed+=(sender,_)=>{if(ReferenceEquals(MainWindow,sender))MainWindow=null;settingsWindow=null;ScheduleCollection();};}
+  settingsWindow.Owner=overlay?.IsVisible==true?overlay:null;settingsWindow.Topmost=settingsWindow.Owner?.Topmost==true;
+  settingsWindow.Show();settingsWindow.WindowState=WindowState.Normal;settingsWindow.Activate();
+ }
  void ScheduleCollection()=>Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,new Action(()=>GC.Collect(2,GCCollectionMode.Forced,false)));
  public void SaveSettings()=>Store.Save(Settings);
+ public Task<OcrResponse> RecognizeAsync(byte[] image,CancellationToken token)=>Ocr.RecognizeAsync(image,token);
+ public TranslationService CreateTranslationService()=>new();
  public void ChangeHotkey(string value){hotkey?.Set(value);if(tray is not null)tray.Text="屏译 · "+value;}
  public async void BeginCapture()
  {
-  if(selector is not null)return;
+  if(capturing||selector is not null)return;capturing=true;
   try
   {
-   overlay?.Close();overlay=null;settingsWindow?.Close();await Task.Delay(140);
+   overlay?.Close();overlay=null;settingsWindow?.Close();await Task.Delay(140);if(Quitting)return;
    selector=new SelectionWindow();selector.ShowDialog();var result=selector.Result;selector=null;
    if(result is not null)ShowOverlay(result);
   }
   catch(Exception ex){selector?.Close();selector=null;MessageBox.Show(ex.Message,"无法截取屏幕");ShowSettings();}
+  finally{capturing=false;}
  }
  public void OpenImage(string path)
  {

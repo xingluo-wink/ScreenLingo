@@ -9,21 +9,24 @@ public sealed class TranslationCanvas:FrameworkElement
  readonly Dictionary<string,(SolidColorBrush Background,Brush Foreground)> colors=[];
  public TranslationCanvas(BitmapSource image){this.image=image;Width=image.PixelWidth;Height=image.PixelHeight;}
  public void Clear(){image=null;Regions=[];Translations=new Dictionary<string,string>();colors.Clear();InvalidateVisual();}
+ public bool FitsAllText()=>Regions.All(region=>!Translations.TryGetValue(region.Id,out var text)||!Layout(region,text,Brushes.Black).Overflow);
+ (Rect Rect,FormattedText Text,bool Overflow) Layout(TextRegion region,string translated,Brush foreground)
+ {
+  var rect=new Rect(Math.Max(0,region.X-2),Math.Max(0,region.Y-1),Math.Max(1,Math.Min(Width-Math.Max(0,region.X-2),region.Width+4)),Math.Max(1,Math.Min(Height-Math.Max(0,region.Y-1),region.Height+2)));
+  double font=Math.Clamp(region.FontHeight*.72,12,42);var text=Format(translated,font,foreground,Math.Max(2,rect.Width-4));
+  while(text.Height+text.OverhangAfter>rect.Height-4&&font>12){font-=.5;text=Format(translated,font,foreground,Math.Max(2,rect.Width-4));}
+  bool overflow=text.Height+text.OverhangAfter>rect.Height-4||text.WidthIncludingTrailingWhitespace>rect.Width-4||text.MinWidth>rect.Width-4;
+  return(rect,text,overflow);
+ }
  protected override void OnRender(DrawingContext dc)
  {
   if(image is null)return;HasOverflow=false;dc.DrawImage(image,new Rect(0,0,Width,Height));if(Original)return;
   foreach(var region in Regions)
   {
    if(!Translations.TryGetValue(region.Id,out var translated))continue;
-   var rect=new Rect(Math.Max(0,region.X-2),Math.Max(0,region.Y-1),Math.Min(Width-Math.Max(0,region.X-2),region.Width+4),Math.Min(Height-Math.Max(0,region.Y-1),region.Height+2));
-   if(rect.Width<4||rect.Height<4)continue;
-   var(background,foreground)=SampleColors(region);dc.DrawRectangle(background,null,rect);
-   double font=Math.Clamp(region.FontHeight*.72,12,42);FormattedText text=Format(translated,font,foreground,Math.Max(2,rect.Width-4));
-   while(text.Height>rect.Height-2 && font>12){font-=.5;text=Format(translated,font,foreground,Math.Max(2,rect.Width-4));}
-   bool overflow=text.Height>rect.Height-1||text.MinWidth>rect.Width;
-   HasOverflow|=overflow;
-   dc.PushClip(new RectangleGeometry(rect));dc.DrawText(text,new Point(rect.X+2,rect.Y));dc.Pop();
-   if(overflow)dc.DrawRectangle(Ui.Accent,null,new Rect(Math.Max(rect.Left,rect.Right-5),rect.Top,4,rect.Height));
+   var(background,foreground)=SampleColors(region);var(rect,text,overflow)=Layout(region,translated,foreground);HasOverflow|=overflow;
+   if(overflow)continue;
+   dc.DrawRectangle(background,null,rect);dc.PushClip(new RectangleGeometry(rect));dc.DrawText(text,new Point(rect.X+2,rect.Y+1));dc.Pop();
   }
  }
  FormattedText Format(string text,double size,Brush color,double width)=>new(text,CultureInfo.CurrentCulture,FlowDirection.LeftToRight,new Typeface("Microsoft YaHei UI"),size,color,1){MaxTextWidth=width};

@@ -12,7 +12,13 @@ public sealed class SettingsStore
  public AppSettings Load()
  {
   if(!File.Exists(FilePath)) return new();
-  try { var settings=JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath))??new();if(settings.Profiles.Count==0)settings.Profiles.Add(new());settings.IdleSeconds=Math.Clamp(settings.IdleSeconds,30,600);settings.ReadingFontSize=Math.Clamp(settings.ReadingFontSize,12,40);return settings; }
+  try
+  {
+   var settings=JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath))??new();settings.Profiles??=[];settings.Profiles.RemoveAll(p=>p is null);
+   if(settings.Profiles.Count==0)settings.Profiles.Add(new());settings.IdleSeconds=Math.Clamp(settings.IdleSeconds,30,600);settings.ReadingFontSize=Math.Clamp(settings.ReadingFontSize,12,40);
+   settings.ReaderWidth=double.IsFinite(settings.ReaderWidth)?Math.Clamp(settings.ReaderWidth,0,4000):0;
+   settings.ReaderHeight=double.IsFinite(settings.ReaderHeight)?Math.Clamp(settings.ReaderHeight,0,4000):0;return settings;
+  }
   catch(Exception ex) when(ex is JsonException or IOException) { LoadWarning="配置文件无法读取，原文件已保留。请检查或重新保存配置。";return new(); }
  }
  public void Save(AppSettings settings)

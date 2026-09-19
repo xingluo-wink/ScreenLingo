@@ -18,7 +18,7 @@ static class Program
   string root=args.Length>0?args[0]:Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../.."));Directory.CreateDirectory(Path.Combine(root,"work","qa"));
   if(args.Contains("--reader-layout"))
   {
-   Ui.Install(new Application());ReaderLayoutTests();ReaderFeatureTests(root);File.WriteAllText(Path.Combine(root,"work","qa","reader-layout-report.json"),JsonSerializer.Serialize(new{passed=results.Count-failures,failed=failures,results},new JsonSerializerOptions{WriteIndented=true}));return failures==0?0:1;
+   Ui.Install(new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown});ReaderExperienceTests.Run(Check,root);File.WriteAllText(Path.Combine(root,"work","qa","reader-layout-report.json"),JsonSerializer.Serialize(new{passed=results.Count-failures,failed=failures,results},new JsonSerializerOptions{WriteIndented=true}));return failures==0?0:1;
   }
   if(args.Contains("--fixture"))
   {
@@ -27,71 +27,15 @@ static class Program
   }
   try
   {
-   CoreTests();Fixtures(root);ApiTests().GetAwaiter().GetResult();OcrTests(root).GetAwaiter().GetResult();
+   CoreTests();ApiTests().GetAwaiter().GetResult();if(!args.Contains("--core-only")){Fixtures(root);OcrTests(root).GetAwaiter().GetResult();}
   }
   catch(Exception ex){Check("unhandled",false,ex.ToString());}
-  File.WriteAllText(Path.Combine(root,"work","qa","test-report.json"),JsonSerializer.Serialize(new{passed=results.Count-failures,failed=failures,results},new JsonSerializerOptions{WriteIndented=true}));
+  File.WriteAllText(Path.Combine(root,"work","qa",args.Contains("--core-only")?"core-report.json":"test-report.json"),JsonSerializer.Serialize(new{passed=results.Count-failures,failed=failures,results},new JsonSerializerOptions{WriteIndented=true}));
   Console.WriteLine($"TESTS: {results.Count-failures} passed, {failures} failed");return failures==0?0:1;
  }
  static void Check(string name,bool passed,object? detail=null){results.Add(new{name,passed,detail});if(!passed)failures++;Console.WriteLine($"{(passed?"PASS":"FAIL")} {name}: {JsonSerializer.Serialize(detail)}");}
  static void Throws(string name,Action action){try{action();Check(name,false);}catch(Exception){Check(name,true);}}
  static TextRegion Block(string id,string text)=>new(id,text,0,0,600,30,24,1);
- static void ReaderLayoutTests()
- {
-  var selection=new System.Drawing.Rectangle(150,200,150,45);var screen=new System.Drawing.Rectangle(0,0,1920,1040);
-  double Measure(double width,string content){var text=Ui.Text(content,16);text.LineHeight=25;var card=Ui.Card(text,new Thickness(12,9,12,9));card.Margin=new Thickness(0,0,0,8);card.Measure(new Size(width,double.PositiveInfinity));return card.DesiredSize.Height;}
-  const string shortText="In-place Chinese overlay";
-  var small=ReadingLayout.Fit(selection,screen,1,1,100,w=>Measure(w,shortText));
-  Check("small selection shows complete translation",small.Width>=420&&small.Height>=Measure(small.Width-28,shortText)+28,new{small.Width,small.Height});
-  string paragraph=string.Join(" ",Enumerable.Repeat("The full translated content must remain visible without opening another dialog.",12));
-  var longText=ReadingLayout.Fit(selection,screen,1,1,100,w=>Measure(w,paragraph));
-  Check("paragraph grows vertically to fit",longText.Height>small.Height&&longText.Height>=Measure(longText.Width-28,paragraph)+28,new{longText.Width,longText.Height});
-  var monitor=new System.Drawing.Rectangle(-1920,0,1920,1040);
-  var edge=ReadingLayout.Fit(new(-50,990,150,45),monitor,1.5,1.5,150,w=>Measure(w,paragraph));
-  Check("expanded panel stays within monitor",edge.Left>=monitor.Left&&edge.Right<=monitor.Right&&edge.Bottom<=monitor.Bottom&&edge.Top>=monitor.Top+150,new{edge.X,edge.Y,edge.Width,edge.Height});
- }
- static void ReaderFeatureTests(string root)
- {
-  const string zhText="原位中文覆盖。字号变大以后，完整内容也应自动换行，不需要点开另一个窗口才能看清。";
-  const string enText="In-place Chinese overlay. Larger text should wrap naturally, and the entire paragraph should remain readable without opening another window.";
-  var region=Block("b1","原位中文覆盖 · In-place overlay");
-  var zh=new Dictionary<string,string>{{"b1",zhText}};var en=new Dictionary<string,string>{{"b1",enText}};
-  System.Windows.Controls.Border Pair(int font)
-  {
-   var pair=ReadingContent.Card(region,zh,en,"zh",true,font);
-   System.Windows.Documents.TextElement.SetFontFamily(pair,new FontFamily("Microsoft YaHei UI"));return pair;
-  }
-  var normal=Pair(16);normal.Measure(new Size(732,double.PositiveInfinity));
-  var large=Pair(32);large.Measure(new Size(732,double.PositiveInfinity));large.Arrange(new Rect(new Point(),large.DesiredSize));large.UpdateLayout();
-  var columns=(System.Windows.Controls.Grid)large.Child;
-  var left=(System.Windows.Controls.StackPanel)columns.Children[0];var right=(System.Windows.Controls.StackPanel)columns.Children[2];
-  var leftText=(System.Windows.Controls.TextBlock)left.Children[1];var rightText=(System.Windows.Controls.TextBlock)right.Children[1];
-  Check("both full languages visible side by side",leftText.Text==zhText&&rightText.Text==enText&&left.ActualWidth>250&&right.ActualWidth>250&&right.TranslatePoint(new Point(),columns).X>left.ActualWidth);
-  Check("larger font grows cards without shrinking text",leftText.FontSize==32&&rightText.FontSize==32&&large.DesiredSize.Height>normal.DesiredSize.Height,new{normal=normal.DesiredSize.Height,large=large.DesiredSize.Height});
-  var screen=new System.Drawing.Rectangle(0,0,1920,1040);
-  var fitted=ReadingLayout.Fit(new(150,200,150,45),screen,1,1,140,width=>{large.Measure(new Size(width,double.PositiveInfinity));return large.DesiredSize.Height;},true);
-  Check("small capture expands for complete bilingual content",fitted.Width>=760&&fitted.Height>=large.DesiredSize.Height+28,new{fitted.Width,fitted.Height});
-  var scroll=new System.Windows.Controls.ScrollViewer{Padding=new Thickness(14),VerticalScrollBarVisibility=System.Windows.Controls.ScrollBarVisibility.Auto,Content=large};
-  scroll.Measure(new Size(fitted.Width,fitted.Height));scroll.Arrange(new Rect(0,0,fitted.Width,fitted.Height));scroll.UpdateLayout();
-  Check("fitted bilingual reader has no hidden short content",scroll.ScrollableHeight==0&&scroll.ScrollableWidth==0,new{scroll.ScrollableHeight,scroll.ScrollableWidth});
-  scroll.Content=null;
-  var copy=ReadingContent.BilingualText([region],zh,en);Check("copy keeps complete paired text",copy.Contains(zhText)&&copy.Contains(enText));
-  var missing=ReadingContent.Card(region,zh,new Dictionary<string,string>(),"zh",true,16);
-  var missingRight=(System.Windows.Controls.StackPanel)((System.Windows.Controls.Grid)missing.Child).Children[2];
-  Check("missing language is not mislabeled source text",((System.Windows.Controls.TextBlock)missingRight.Children[1]).Text=="尚未翻译");
-  var stack=new System.Windows.Controls.StackPanel();for(int i=0;i<4;i++)stack.Children.Add(Pair(32));
-  var export=new System.Windows.Controls.Border{Width=760,Padding=new Thickness(14),Background=Ui.Background,Child=stack};
-  export.Measure(new Size(760,double.PositiveInfinity));export.Arrange(new Rect(new Point(),export.DesiredSize));export.UpdateLayout();
-  Check("export includes content beyond screen height",export.ActualHeight>screen.Height&&stack.Children.Cast<FrameworkElement>().All(x=>x.ActualHeight>0),new{export.ActualHeight});
-  var bitmap=new RenderTargetBitmap((int)Math.Ceiling(export.ActualWidth),(int)Math.Ceiling(export.ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(export);
-  File.WriteAllBytes(Path.Combine(root,"work","qa","bilingual-font-32.png"),Capture.Png(bitmap));
-  var store=new SettingsStore(Path.Combine(root,"work","qa","display-settings"));
-  File.WriteAllText(store.FilePath,"{\"Hotkey\":\"Ctrl+Alt+Q\",\"Profiles\":[{\"Name\":\"Mock profile\",\"ProtectedKey\":\"test-only-protected-value\"}]}");
-  var settings=store.Load();Check("older settings keep safe display defaults",settings.ReadingFontSize==16&&!settings.BilingualDisplay);
-  settings.ReadingFontSize=32;settings.BilingualDisplay=true;store.Save(settings);var restored=store.Load();
-  Check("display preferences persist without altering API fields",restored.ReadingFontSize==32&&restored.BilingualDisplay&&restored.Profiles[0].ProtectedKey=="test-only-protected-value"&&restored.Profiles[0].Name=="Mock profile");
-  settings.ReadingFontSize=500;store.Save(settings);Check("invalid saved font is bounded",store.Load().ReadingFontSize==40);
- }
  static void CoreTests()
  {
   var wrapped=LayoutGrouper.Group([new("You should take the following",0,0,380,24,1),new("factors into account.",0,29,300,24,1)]);

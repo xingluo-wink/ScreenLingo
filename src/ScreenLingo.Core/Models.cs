@@ -35,6 +35,10 @@ public sealed class AppSettings
     public string LastTarget { get; set; } = "zh";
     public int ReadingFontSize { get; set; } = 16;
     public bool BilingualDisplay { get; set; }
+    public bool BilingualSideBySide { get; set; }
+    public bool ReaderTopmost { get; set; } = true;
+    public double ReaderWidth { get; set; }
+    public double ReaderHeight { get; set; }
     public string ScreenshotDirectory { get; set; } = "";
     public ApiProfile? ActiveProfile => Profiles.FirstOrDefault(x => x.Id == ActiveProfileId) ?? Profiles.FirstOrDefault();
 }
