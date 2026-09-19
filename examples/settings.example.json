@@ -1,0 +1,21 @@
+{
+  "Profiles": [
+    {
+      "Id": "example",
+      "Name": "My API",
+      "Protocol": 0,
+      "BaseUrl": "https://api.example.com/v1",
+      "Model": "your-model-id",
+      "ProtectedKey": "",
+      "TimeoutSeconds": 60,
+      "MaxOutputTokens": 4096,
+      "ExtraBody": "{}",
+      "Style": "Faithful and natural. Preserve numbers, code and URLs."
+    }
+  ],
+  "ActiveProfileId": "example",
+  "Hotkey": "Ctrl+Alt+Q",
+  "IdleSeconds": 120,
+  "LastTarget": "zh",
+  "ScreenshotDirectory": ""
+}

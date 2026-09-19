@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>ScreenLingo.Ocr</AssemblyName></PropertyGroup>
+ <ItemGroup><ProjectReference Include="../ScreenLingo.Core/ScreenLingo.Core.csproj" /><PackageReference Include="RapidOcrNet" Version="4.2.0" /></ItemGroup>
+</Project>

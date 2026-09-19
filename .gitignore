@@ -1,0 +1,28 @@
+# Build outputs and development caches
+**/bin/
+**/obj/
+/tools/
+/work/
+/release/
+/.vs/
+/.idea/
+*.user
+*.suo
+*.pdb
+*.log
+*.dmp
+
+# Local credentials and screenshots must never be committed
+**/data/
+**/settings.json
+**/settings-*.json
+**/settings*.bak
+.env
+.env.*
+*.pem
+*.pfx
+*.key
+*.zip
+
+# Public example files contain placeholders only
+!examples/settings.example.json
