@@ -17,5 +17,7 @@
   "Hotkey": "Ctrl+Alt+Q",
   "IdleSeconds": 120,
   "LastTarget": "zh",
-  "ScreenshotDirectory": ""
+  "ScreenshotDirectory": "",
+  "ReadingFontSize": 16,
+  "BilingualDisplay": false
 }

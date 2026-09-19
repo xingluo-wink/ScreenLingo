@@ -1,5 +1,9 @@
 # Verification notes
 
+## v0.1.2
+
+13 focused checks passed for reader sizing, complete side-by-side Chinese/English content, font enlargement, scrollbar-free display of short text, full-height image export, bilingual copying, missing-language placeholders, settings migration and font bounds. A 32-size bilingual image was rendered and inspected. These checks used fixed sample text and no external API calls. The new controls and real-provider translation are left for user testing.
+
 ## v0.1.1
 
 Three focused layout checks passed: a small screenshot expands to show the whole translation; a paragraph expands vertically; the panel remains within the monitor working area at 150% scaling with a negative monitor origin. These are WPF layout measurements, not a claim that every multi-monitor setup has been exercised.

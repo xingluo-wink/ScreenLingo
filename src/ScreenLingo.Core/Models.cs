@@ -33,6 +33,8 @@ public sealed class AppSettings
     public string Hotkey { get; set; } = "Ctrl+Alt+Q";
     public int IdleSeconds { get; set; } = 120;
     public string LastTarget { get; set; } = "zh";
+    public int ReadingFontSize { get; set; } = 16;
+    public bool BilingualDisplay { get; set; }
     public string ScreenshotDirectory { get; set; } = "";
     public ApiProfile? ActiveProfile => Profiles.FirstOrDefault(x => x.Id == ActiveProfileId) ?? Profiles.FirstOrDefault();
 }
