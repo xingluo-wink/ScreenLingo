@@ -29,7 +29,7 @@ static class ReaderExperienceTests
   check("narrow or large-font bilingual content falls back to stacked paragraphs",!ReadingLayout.UseColumns(true,640,16)&&!ReadingLayout.UseColumns(true,780,40)&&ReadingLayout.UseColumns(true,840,24),null);
   var store=new SettingsStore(Path.Combine(work,"reader-settings"));
   File.WriteAllText(store.FilePath,"{\"ReadingFontSize\":18,\"BilingualDisplay\":true,\"Profiles\":[{\"Name\":\"Mock API\",\"ProtectedKey\":\"test-only-value\"}]}");
-  var settings=store.Load();check("existing API and display settings migrate",settings.ReadingFontSize==18&&settings.BilingualDisplay&&settings.ReaderTopmost&&!settings.BilingualSideBySide&&settings.Profiles[0].ProtectedKey=="test-only-value",null);
+  var settings=store.Load();check("existing API and display settings migrate",settings.ReadingFontSize==18&&settings.BilingualDisplay&&settings.ReaderTopmost&&!settings.BilingualSideBySide&&settings.Profiles[0].StreamResponses&&settings.Profiles[0].ProtectedKey=="test-only-value",null);
   settings.ReaderWidth=730;settings.ReaderHeight=420;settings.ReaderTopmost=false;store.Save(settings);var restored=store.Load();
   check("window preferences round-trip with credentials unchanged",restored.ReaderWidth==730&&restored.ReaderHeight==420&&!restored.ReaderTopmost&&restored.Profiles[0].ProtectedKey=="test-only-value",null);
 
@@ -123,6 +123,31 @@ static class ReaderExperienceTests
    check("large-font export includes final characters",large.PlainText.EndsWith("末尾完整。")&&large.ActualHeight>100,null);
   }
   finally{sample.Close();}
+  var streamHost=new FakeHost(3){Streaming=true};var streaming=NewWindow(streamHost);streaming.Show();
+  try
+  {
+   await Ready(streaming);var pending=streaming.SelectModeAsync(ReadingMode.Bilingual);
+   await Until(()=>streaming.Reader.PlainText.Contains("EN b1"));
+   check("reader displays streamed text before response completion",streaming.IsTranslating&&!pending.IsCompleted&&!streaming.Reader.PlainText.Contains("中文 b3"),null);
+   streamHost.TextGate.TrySetResult();await Until(()=>streamHost.Requests.Any(r=>r.Language=="align"));
+   LinkedSelectionTests.SelectSnippet(streaming.Reader,"中文 b1。");await Until(()=>streaming.Reader.LinkedSelectionLabel.Length>0);
+   check("reader links completed streamed pairs before alignment finishes",streaming.IsTranslating&&streaming.Reader.LinkedSelectionLabel=="对应英文：EN b1."&&streaming.Reader.LinkedHighlightRects.Count>0,null);
+   Save((FrameworkElement)streaming.Content,Path.Combine(work,"reader-0.3.2-progressive.png"));
+   streamHost.AlignmentGate.TrySetResult();await pending;int calls=streamHost.Requests.Count;
+   await streaming.SelectModeAsync(ReadingMode.Chinese);await streaming.SelectModeAsync(ReadingMode.Bilingual);
+   check("only validated streamed results are reused by mode switches",streaming.Reader.PlainText.Contains("中文 b3")&&streamHost.Requests.Count==calls,null);
+  }
+  finally{streaming.Close();}
+  var streamCancelHost=new FakeHost(3){Streaming=true};var streamCancel=NewWindow(streamCancelHost);streamCancel.Show();
+  try
+  {
+   await Ready(streamCancel);await streamCancel.SelectModeAsync(ReadingMode.Chinese);var pending=streamCancel.SelectModeAsync(ReadingMode.Bilingual);
+   await Until(()=>streamCancel.Reader.PlainText.Contains("EN b1"));streamCancel.CancelTranslation();await pending;
+   check("cancel discards streaming draft but keeps completed translation",!streamCancel.Reader.PlainText.Contains("EN b1")&&streamCancel.Reader.PlainText.Contains("中文 b3"),null);
+   streamCancelHost.TextGate.TrySetResult();streamCancelHost.AlignmentGate.TrySetResult();int calls=streamCancelHost.Requests.Count;await streamCancel.TranslateAsync();
+   check("cancelled streaming text is requested again instead of cached",streamCancelHost.Requests.Count==calls+2&&streamCancel.Reader.PlainText.Contains("EN b3"),null);
+  }
+  finally{streamCancel.Close();}
   await LinkedSelectionTests.Run(check,work);
  }
  static OverlayWindow NewWindow(FakeHost host)
@@ -143,7 +168,8 @@ static class ReaderExperienceTests
  sealed class FakeHost(int count):IReaderHost
  {
   public AppSettings Settings{get;}=new(){Profiles=[new(){BaseUrl="https://example.com/v1",Model="mock-reader"}],ReaderTopmost=false};
-  public List<Request> Requests{get;}=[];public bool SlowSecond,SlowAlignment;public int Delay=12,TruncateAlignment;
+  public List<Request> Requests{get;}=[];public bool SlowSecond,SlowAlignment,Streaming;public int Delay=12,TruncateAlignment;
+  public TaskCompletionSource TextGate=new(TaskCreationOptions.RunContinuationsAsynchronously),AlignmentGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
   public int Count=>count;
   public void SaveSettings(){}public void ShowSettings(){}
   public Task<OcrResponse> RecognizeAsync(byte[] image,CancellationToken token)=>Task.FromResult(new OcrResponse(Enumerable.Range(1,count).Select(i=>new OcrLine($"Original {i}.",20,i*40,180,24,1)).ToList(),0));
@@ -165,6 +191,14 @@ static class ReaderExperienceTests
    string zh=knownZh??string.Join(" ",Enumerable.Range(1,host.Count).Select(i=>$"中文 b{i}。调整字号后文字会自然换行。拖动窗口后保持位置，可以直接划选复制，末尾完整。"));
    bool truncated=align&&host.TruncateAlignment-->0;
    var content=truncated?"{\"pairs\":[[":align?JsonSerializer.Serialize(new{pairs=Enumerable.Range(1,host.Count).Select(i=>new[]{$"EN b{i}.",$"中文 b{i}。"})}):bilingual?JsonSerializer.Serialize(new{english=input.RootElement.GetProperty("existingEnglish").GetString()??en,chinese=zh}):JsonSerializer.Serialize(new{translations=ids.Select(id=>new{id,text=english?en:zh})});
+   if(host.Streaming&&(bilingual||align))
+   {
+    int split=align?content.IndexOf("],",StringComparison.Ordinal)+1:content.IndexOf("\"chinese\"",StringComparison.Ordinal)+40;
+    var prefix=Encoding.UTF8.GetBytes(StreamingTests.Delta(ApiProtocol.ChatCompletions,content[..split]));
+    var suffix=Encoding.UTF8.GetBytes(StreamingTests.Delta(ApiProtocol.ChatCompletions,content[split..])+StreamingTests.Terminal(ApiProtocol.ChatCompletions));
+    var stream=new StreamContent(new StreamingTests.GatedStream(prefix,suffix,(align?host.AlignmentGate:host.TextGate).Task));stream.Headers.ContentType=new("text/event-stream");
+    return new(HttpStatusCode.OK){Content=stream};
+   }
    return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{choices=new[]{new{finish_reason=truncated?"length":"stop",message=new{content}}}}),Encoding.UTF8,"application/json")};
   }
  }

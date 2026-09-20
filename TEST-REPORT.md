@@ -1,5 +1,17 @@
 # Verification notes
 
+## v0.3.2
+
+Translation text and phrase links are displayed progressively through SSE for Chat Completions, Responses, Anthropic and Gemini. Ordinary JSON responses remain supported, and each API profile has a streaming toggle; Qwen-MT retains its non-streaming protocol. For bilingual output the model can identify an already-English or Simplified-Chinese source so the exact source is reused instead of regenerated. Completed text is validated before caching; drafts are discarded on cancellation, disconnection, malformed final JSON or token truncation. Fully closed phrase pairs can be selected while later pairs are still arriving. Native selection triggers no API request.
+
+Highlight geometry now uses visual lines and cached rectangles instead of measuring every character during redraw. Scroll, font, text, layout and selected-span changes invalidate the cache. Reader refreshes skip unchanged layout properties. The default HTTP transport reuses connections. Text completion and optional alignment preparation are timed separately.
+
+63 core/protocol checks and 52 WPF reader checks passed. New cases include early text and alignment on all four SSE protocols; UTF-8 packet boundaries, split Unicode escapes, quotes and emoji; hidden reasoning; truncation and abrupt EOF; cancellation while stalled; disabled streaming and JSON-only gateways; actual reader draft display, early linked selection, retained complete translations and retry without caching partial text. Existing layout, copying, ordering and cancellation cases pass. The progressive reader was rendered and inspected.
+
+In a local 695-character, 12-line highlight sample (20 iterations), the former per-character geometry averaged 86.20 ms and the new uncached line geometry 1.62 ms, about 53 times faster for that operation. Unchanged ranges reuse the result. This is a focused rendering benchmark, not an end-to-end mouse latency guarantee or real API speed claim. A comparison also caught the old algorithm leaving a gap over emoji; the new line rectangles cover the full line.
+
+All API responses were injected locally; no commercial API or user quota was used. Real first-token latency, total latency, translation quality and phrase alignment quality depend on the configured service/model. No model-specific thinking parameters are added automatically. Physical multi-monitor/mixed-DPI use still needs user testing. OCR is unchanged.
+
 ## v0.3.1
 
 Bilingual text and optional phrase alignment now use separate requests. Complete translations are saved and displayed before requesting alignment. Compact phrase arrays reduce alignment output overhead. On a token-limit response, only alignment is retried once with a smaller phrase limit; the configured output-token limit is retained. Repeated truncation, timeout, malformed metadata or cancellation does not discard completed translations. The reader offers an alignment-only retry.

@@ -9,6 +9,7 @@ public sealed class MainWindow:Window
  readonly ListBox profiles=new(){MinWidth=160,BorderThickness=new Thickness(0),Background=Brushes.Transparent};
  readonly TextBox name=new(),url=new(),model=new(),timeout=new(),tokens=new(),extra=new(){AcceptsReturn=true,Height=88,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,FontFamily=new FontFamily("Consolas")},style=new(){AcceptsReturn=true,Height=60,TextWrapping=TextWrapping.Wrap};
  readonly PasswordBox key=new();
+ readonly CheckBox streaming=new(){Content="边生成边显示译文与高亮",Margin=new Thickness(0,10,0,6)};
  readonly ComboBox protocol=new(),idle=new();
  readonly TextBox hotkey=new(){IsReadOnly=true};
  readonly TextBlock status=Ui.Text("填写 API 后点击「测试翻译」，或直接框选体验本地文字识别。",12,Ui.Muted);
@@ -18,7 +19,7 @@ public sealed class MainWindow:Window
  {
   app=application;Title="屏译 ScreenLingo";Width=920;Height=Math.Min(850,SystemParameters.WorkArea.Height-50);MinWidth=760;MinHeight=580;WindowStartupLocation=WindowStartupLocation.CenterScreen;
   var root=new Grid{Margin=new Thickness(28,22,28,18)};root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new());root.RowDefinitions.Add(new(){Height=GridLength.Auto});Content=root;
-  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.3.1  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
+  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.3.2  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
   var brand=new StackPanel();brand.Children.Add(Ui.Text("屏译  ScreenLingo",27));brand.Children.Add(Ui.Text("框选眼前的内容，用熟悉的语言阅读。",12,Ui.Muted));heading.Children.Add(brand);root.Children.Add(heading);
   var hero=new DockPanel();var capture=Ui.Btn("＋  框选屏幕",()=>app.BeginCapture(),true);capture.MinWidth=155;capture.FontSize=15;DockPanel.SetDock(capture,Dock.Right);hero.Children.Add(capture);
   var introduction=new StackPanel();introduction.Children.Add(Ui.Text("随时框选，即刻开始",16));introduction.Children.Add(Ui.Text("中文 / English · 中英双语 · 字号可调 · 截图独立保存",12,Ui.Muted));hero.Children.Add(introduction);
@@ -50,6 +51,7 @@ public sealed class MainWindow:Window
   Ui.Field(form,"API 地址",url,"填写服务商提供的基础地址（通常含 /v1）；也支持完整接口地址。");
   Ui.Field(form,"API Key",key,"密钥在本机加密保存；本机免密接口可以留空。");Ui.Field(form,"模型名称",model,"按服务商提供的模型 ID 原样填写。");
   var advanced=new StackPanel();Ui.Field(advanced,"请求超时（秒）",timeout);Ui.Field(advanced,"最大输出 Token",tokens);
+  advanced.Children.Add(streaming);advanced.Children.Add(Ui.Text("默认开启。接口不支持流式响应时可关闭；Qwen-MT 使用完整返回。",11,Ui.Muted));
   Ui.Field(advanced,"翻译风格",style);Ui.Field(advanced,"额外请求参数（JSON）",extra,"例如 {\"temperature\":0.2}。模型、输入和目标语言由软件管理。");
   form.Children.Add(new Expander{Header="高级设置",Content=advanced,Margin=new Thickness(0,16,0,0)});return layout;
  }
@@ -78,7 +80,7 @@ public sealed class MainWindow:Window
    ("01  框选屏幕","按快捷键或点击「框选屏幕」，拖动选择范围，松开完成。Esc 随时退出。"),
    ("02  选择阅读模式","点击「中文」「English」或「双语」，当前模式会高亮。翻译等待期间仍可阅读识别原文；已完成译文会复用，重试只补充缺失内容。"),
    ("03  自由调整窗口","拖动系统标题栏移动窗口，拖动边缘调整大小，尺寸会记住。工具条与正文一起移动；更新译文和调整字号不会重置手动位置。更多菜单提供置顶开关和「窗口适应内容」。"),
-   ("字号与中英双语","使用 A− / A＋ 或字号菜单选择 12–40；正文上 Ctrl+滚轮也可调整。双语默认逐段英文在上、中文在下；更多菜单可选宽窗口左右对照，窄窗口或大字时自动改为上下对照。正文可以跨段划选复制，单击不会弹出新窗口。"),
+   ("字号与中英双语","使用 A− / A＋ 或字号菜单选择 12–40；正文上 Ctrl+滚轮也可调整。整个选区一起翻译，英文在上、中文在下；更多菜单可选宽窗口左右对照，窄窗口或大字时自动改为上下对照。词组对应逐步就绪后，选中一侧文字，另一侧同步高亮。"),
    ("原图和原图布局","点击「原图」或按住空格查看截图，阅读窗口的位置与大小保持不变。「更多 → 原图布局预览」按截图排字；放不下完整译文时会保留完整阅读。"),
    ("键盘操作","C 中文、E 英文、B 双语、O 切换原图、R 返回正文；Ctrl+C 复制选中文字或正文；Ctrl+S 保存原图，Ctrl+Shift+S 保存完整译图；Esc 关闭窗口。"),
    ("04  保存是独立操作","「更多 → 保存原图」保存所选截图；「保存完整译图」保存全部文字，含滚动区域外的内容，并保留字号及双语排版。"),
@@ -92,6 +94,7 @@ public sealed class MainWindow:Window
  {
   if(loading)return;StoreDraft();current=profiles.SelectedItem as ApiProfile;if(current is null)return;
   name.Text=current.Name;url.Text=current.BaseUrl;model.Text=current.Model;protocol.SelectedIndex=(int)current.Protocol;timeout.Text=current.TimeoutSeconds.ToString();tokens.Text=current.MaxOutputTokens.ToString();extra.Text=current.ExtraBody;style.Text=current.Style;
+  streaming.IsChecked=current.StreamResponses;
   try{key.Password=KeyVault.Unprotect(current.ProtectedKey);}catch(Exception ex){key.Password="";status.Text=ex.Message;}
  }
  void StoreDraft()
@@ -99,6 +102,7 @@ public sealed class MainWindow:Window
   if(current is null)return;
   current.Name=string.IsNullOrWhiteSpace(name.Text)?"我的 API":name.Text.Trim();current.BaseUrl=url.Text.Trim();current.Model=model.Text.Trim();current.Protocol=(ApiProtocol)Math.Max(0,protocol.SelectedIndex);current.ProtectedKey=KeyVault.Protect(key.Password);
   current.TimeoutSeconds=int.TryParse(timeout.Text,out var seconds)?seconds:60;current.MaxOutputTokens=int.TryParse(tokens.Text,out var count)?count:4096;current.ExtraBody=extra.Text;current.Style=style.Text;
+  current.StreamResponses=streaming.IsChecked==true;
  }
  void Save()
  {

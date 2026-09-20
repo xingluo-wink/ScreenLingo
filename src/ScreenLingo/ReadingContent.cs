@@ -16,7 +16,7 @@ public sealed class ReadingContent:RichTextBox
  readonly List<(Run Text,TextSpan Span)> linkedRanges=[];
  public string LinkedSelectionLabel { get; private set; }="";
  public event EventHandler? LinkedSelectionChanged;
- public IReadOnlyList<Rect> LinkedHighlightRects=>LinkedTextAdorner.Rectangles(linkedRanges);
+ public IReadOnlyList<Rect> LinkedHighlightRects=>highlighter?.GetRectangles()??LinkedTextAdorner.Rectangles(linkedRanges);
  public bool UsesColumns=>columns;
  public string PlainText=>new TextRange(Document.ContentStart,Document.ContentEnd).Text.Trim();
  public ReadingContent()
@@ -28,8 +28,8 @@ public sealed class ReadingContent:RichTextBox
   UseLayoutRounding=true;SnapsToDevicePixels=true;MinHeight=0;
   TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);Document=NewDocument(16);
   SelectionChanged+=(_,_)=>UpdateLinkedSelection();
-  AddHandler(ScrollViewer.ScrollChangedEvent,new ScrollChangedEventHandler((_,_)=>highlighter?.InvalidateVisual()));
-  SizeChanged+=(_,_)=>highlighter?.InvalidateVisual();
+  AddHandler(ScrollViewer.ScrollChangedEvent,new ScrollChangedEventHandler((_,_)=>highlighter?.InvalidateGeometry()));
+  SizeChanged+=(_,_)=>highlighter?.InvalidateGeometry();
   Loaded+=(_,_)=>
   {
    adorners=AdornerLayer.GetAdornerLayer(this);
@@ -44,7 +44,7 @@ public sealed class ReadingContent:RichTextBox
  }
  void UpdateLinkedSelection()
  {
-  if(presenting)return;linkedRanges.Clear();string label="";
+  if(presenting)return;var nextRanges=new List<(Run Text,TextSpan Span)>();string label="";
   if(mode==ReadingMode.Bilingual&&!sourceOnly&&alignment is not null&&!Selection.IsEmpty)
   {
    var selected=runs.Where(r=>(r.Language is "en" or "zh")&&Selection.Start.CompareTo(r.Text.ContentEnd)<0&&Selection.End.CompareTo(r.Text.ContentStart)>0).ToList();
@@ -57,16 +57,23 @@ public sealed class ReadingContent:RichTextBox
      var end=Selection.End.CompareTo(from.Text.ContentEnd)>0?from.Text.ContentEnd:Selection.End;
      int offset=from.Text.ContentStart.GetOffsetToPosition(start);
      int length=start.GetOffsetToPosition(end);
-     if(!string.IsNullOrWhiteSpace(new TextRange(start,end).Text))
+     if(offset>=0&&length>0&&offset+length<=from.Text.Text.Length&&!from.Text.Text.AsSpan(offset,length).IsWhiteSpace())
      {
       foreach(var span in alignment.Match(from.Language,offset,length))
-       if(span.Start>=0&&span.End<=to.Text.Text.Length)linkedRanges.Add((to.Text,span));
-      if(linkedRanges.Count>0)label=(to.Language=="en"?"对应英文：":"对应中文：")+string.Join(" … ",linkedRanges.Select(r=>r.Text.Text.Substring(r.Span.Start,r.Span.Length)));
+       if(span.Start>=0&&span.End<=to.Text.Text.Length)nextRanges.Add((to.Text,span));
      }
     }
    }
   }
-  highlighter?.InvalidateVisual();
+  if(linkedRanges.SequenceEqual(nextRanges))return;
+  linkedRanges.Clear();linkedRanges.AddRange(nextRanges);
+  if(linkedRanges.Count>0)
+  {
+   var first=linkedRanges[0];var language=runs.First(r=>ReferenceEquals(r.Text,first.Text)).Language;
+   var preview=string.Join(" … ",linkedRanges.Take(8).Select(r=>r.Text.Text.Substring(r.Span.Start,Math.Min(r.Span.Length,160))));
+   label=(language=="en"?"对应英文：":"对应中文：")+(preview.Length>200?preview[..200]+"…":preview);
+  }
+  highlighter?.InvalidateGeometry();
   if(LinkedSelectionLabel!=label){LinkedSelectionLabel=label;LinkedSelectionChanged?.Invoke(this,EventArgs.Empty);}
  }
  static FlowDocument NewDocument(int size)=>new(){PagePadding=new Thickness(0),ColumnWidth=double.PositiveInfinity,FontFamily=new FontFamily("Microsoft YaHei UI"),FontSize=size,LineHeight=Math.Ceiling(size*1.6),Foreground=Ui.Ink,TextAlignment=TextAlignment.Left};
@@ -99,20 +106,22 @@ public sealed class ReadingContent:RichTextBox
     }
    }
   }
-  Document.FontSize=fontSize;Document.LineHeight=Math.Ceiling(fontSize*1.6);
+  bool changed=rebuild;
+  if(Document.FontSize!=fontSize){Document.FontSize=fontSize;Document.LineHeight=Math.Ceiling(fontSize*1.6);changed=true;}
   var originals=regions.ToDictionary(r=>r.Id,r=>r.Text);
   foreach(var entry in runs)
   {
    string? text=entry.Language=="source"?originals[entry.Id]:(entry.Language=="en"?english:chinese).GetValueOrDefault(entry.Id);
-   var value=text??(busy?"正在翻译…":"尚无译文");if(entry.Text.Text!=value)entry.Text.Text=value;
-   if(text is null)entry.Text.Foreground=Ui.Muted;else entry.Text.ClearValue(TextElement.ForegroundProperty);
+   var value=text??(busy?"正在翻译…":"尚无译文");if(entry.Text.Text!=value){entry.Text.Text=value;changed=true;}
+   if(text is null){if(entry.Text.ReadLocalValue(TextElement.ForegroundProperty)!=Ui.Muted)entry.Text.Foreground=Ui.Muted;}
+   else if(entry.Text.ReadLocalValue(TextElement.ForegroundProperty)!=DependencyProperty.UnsetValue)entry.Text.ClearValue(TextElement.ForegroundProperty);
   }
-  UpdateLayout();
-  if(!rebuild&&caret is not null&&!double.IsNaN(oldY))
+  if(changed){UpdateLayout();highlighter?.InvalidateGeometry();}
+  if(changed&&!rebuild&&caret is not null&&!double.IsNaN(oldY))
   {
    var newY=caret.GetCharacterRect(LogicalDirection.Forward).Top;if(double.IsFinite(newY))offset+=newY-oldY;
   }
-  ScrollToVerticalOffset(Math.Max(0,offset));
+  if(changed)ScrollToVerticalOffset(Math.Max(0,offset));
   presenting=false;UpdateLinkedSelection();
  }
  Paragraph Paragraph(TextRegion region,string language,Thickness margin)

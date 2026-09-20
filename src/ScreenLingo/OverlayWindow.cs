@@ -25,6 +25,7 @@ public sealed class OverlayWindow:Window
  readonly Dictionary<string,BilingualAlignment> alignmentCache=[];
  BilingualAlignment? alignment;string lastStatus="正在识别选区…";
  List<TextRegion> regions=[];Dictionary<string,string> chinese=[],english=[];
+ Dictionary<string,string> draftChinese=[],draftEnglish=[];BilingualAlignment? draftAlignment;
  string profileKey="";int generation;bool closed,busy,requested,peek,manualBounds,autoFitted,renderQueued;
  Preview preview;HwndSource? source;
  public ReadingMode CurrentMode { get; private set; }
@@ -113,7 +114,7 @@ public sealed class OverlayWindow:Window
   if(message==0x0232)UseManualBounds();return IntPtr.Zero;
  }
  void SetStatus(string text){lastStatus=text;RefreshStatus();}
- void RefreshStatus(){string text=Bilingual&&!busy&&reader.LinkedSelectionLabel.Length>0?reader.LinkedSelectionLabel:lastStatus;status.Text=text;status.ToolTip=text;}
+ void RefreshStatus(){string text=Bilingual&&reader.LinkedSelectionLabel.Length>0?reader.LinkedSelectionLabel:lastStatus;status.Text=text;status.ToolTip=text;}
  void SavePreferences(){try{host.SaveSettings();}catch(Exception ex){SetStatus("偏好未能保存："+ex.Message);}}
  void UpdateModeButtons()
  {
@@ -146,10 +147,18 @@ public sealed class OverlayWindow:Window
  }
  void Render()
  {
-  if(closed)return;reader.Present(regions,chinese,english,CurrentMode,EffectiveColumns,host.Settings.ReadingFontSize,!requested||!HasTranslations,busy);
-  reader.SetAlignment(alignment);RefreshStatus();
+  if(closed)return;
+  var shownChinese=Draft(chinese,draftChinese);var shownEnglish=Draft(english,draftEnglish);
+  bool visible=HasTranslations||(Bilingual?draftChinese.Count>0||draftEnglish.Count>0:CurrentMode==ReadingMode.English?draftEnglish.Count>0:draftChinese.Count>0);
+  reader.Present(regions,shownChinese,shownEnglish,CurrentMode,EffectiveColumns,host.Settings.ReadingFontSize,!requested||!visible,busy);
+  reader.SetAlignment(draftAlignment??alignment);RefreshStatus();
   canvas.Regions=regions;canvas.Translations=CurrentTranslations;copyButton.IsEnabled=regions.Count>0;UpdatePreview();
  }
+ static Dictionary<string,string> Draft(Dictionary<string,string> complete,Dictionary<string,string> pending)
+ {
+  if(pending.Count==0)return complete;var result=new Dictionary<string,string>(complete);foreach(var pair in pending)result[pair.Key]=pair.Value;return result;
+ }
+ void ClearDraft(){draftChinese.Clear();draftEnglish.Clear();draftAlignment=null;}
  void UpdatePreview()
  {
   bool showImage=peek||preview!=Preview.Reading;reader.Visibility=showImage?Visibility.Hidden:Visibility.Visible;imageView.Visibility=showImage?Visibility.Visible:Visibility.Hidden;
@@ -179,7 +188,8 @@ public sealed class OverlayWindow:Window
  public async Task TranslateAsync()
  {
   if(closed)return;int mine=++generation;translating?.Cancel();var request=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);translating=request;
-  var token=request.Token;busy=true;cancelButton.Visibility=Visibility.Visible;retryButton.Content="重试";retryButton.Visibility=Visibility.Collapsed;var selected=CurrentMode;
+  var token=request.Token;ClearDraft();busy=true;cancelButton.Visibility=Visibility.Visible;retryButton.Content="重试";retryButton.Visibility=Visibility.Collapsed;var selected=CurrentMode;
+  bool AcceptProgress()=>!closed&&mine==generation&&!token.IsCancellationRequested&&ReferenceEquals(translating,request);
   try
   {
    SetStatus("正在准备翻译…");if(recognition is not null)await recognition;token.ThrowIfCancellationRequested();
@@ -192,26 +202,39 @@ public sealed class OverlayWindow:Window
     profileKey=fingerprint;chinese=cache.TryGetValue(fingerprint+"zh",out var zh)?new(zh):[];english=cache.TryGetValue(fingerprint+"en",out var en)?new(en):[];
     alignment=alignmentCache.GetValueOrDefault(fingerprint);
    }
-   requested=true;Render();var watch=Stopwatch.StartNew();bool sent=false;string? alignmentProblem=null;using var api=host.CreateTranslationService();
+   requested=true;Render();var watch=Stopwatch.StartNew();string? alignmentProblem=null;using var api=host.CreateTranslationService();double? textSeconds=null,alignmentSeconds=null;
    var selection=regions[0];
    if(selected==ReadingMode.Bilingual)
    {
     if(!chinese.ContainsKey(selection.Id)||!english.ContainsKey(selection.Id))
     {
-     sent=true;SetStatus("正在整体翻译选区…");
-     var result=await api.TranslateBilingualAsync(profile,key,selection,english.GetValueOrDefault(selection.Id),chinese.GetValueOrDefault(selection.Id),token);
+     SetStatus("正在整体翻译选区…");
+     bool accepting=true;
+     var progress=new Progress<BilingualText>(part=>
+     {
+      if(!accepting||!AcceptProgress())return;
+      if(part.English.Length>0)draftEnglish[selection.Id]=part.English;if(part.Chinese.Length>0)draftChinese[selection.Id]=part.Chinese;
+      SetStatus("正在生成译文，可先阅读已出现的内容…");Render();
+     });
+     var result=await api.TranslateBilingualAsync(profile,key,selection,english.GetValueOrDefault(selection.Id),chinese.GetValueOrDefault(selection.Id),token,progress);accepting=false;
      token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
-     english[selection.Id]=result.English;chinese[selection.Id]=result.Chinese;
+     textSeconds=watch.Elapsed.TotalSeconds;ClearDraft();english[selection.Id]=result.English;chinese[selection.Id]=result.Chinese;
      cache[fingerprint+"en"]=new(english);cache[fingerprint+"zh"]=new(chinese);Render();
     }
     if(profile.Protocol!=ApiProtocol.QwenMt&&(alignment is null||alignment.Phrases.Count==0))
     {
-     sent=true;SetStatus("译文已完成 · 正在补充词组高亮，可先阅读或复制");
+     if(!manualBounds&&!autoFitted&&reader.VerticalOffset<1&&reader.Selection.IsEmpty)FitToContent();
+     SetStatus("译文已完成 · 正在补充词组高亮，可先阅读或复制");var alignmentWatch=Stopwatch.StartNew();bool accepting=true;
      try
      {
-      var result=await api.AlignBilingualAsync(profile,key,english[selection.Id],chinese[selection.Id],token);
+      var progress=new Progress<BilingualAlignment>(part=>
+      {
+       if(!accepting||!AcceptProgress()||part.Phrases.Count<=(draftAlignment?.Phrases.Count??0))return;
+       draftAlignment=part;reader.SetAlignment(part);SetStatus("译文已完成 · 已就绪的词组可选中高亮，其余继续补充…");
+      });
+      var result=await api.AlignBilingualAsync(profile,key,english[selection.Id],chinese[selection.Id],token,progress);accepting=false;
       token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
-      alignment=result;alignmentCache[fingerprint]=result;Render();
+      draftAlignment=null;alignment=result;alignmentCache[fingerprint]=result;Render();
      }
      catch(OperationCanceledException){throw;}
      catch(Exception ex)
@@ -219,6 +242,7 @@ public sealed class OverlayWindow:Window
       token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
       alignmentProblem=ex is OutputTruncatedException?"高亮结果仍超出输出上限，可重试高亮":"高亮暂未就绪："+ex.Message;
      }
+     finally{accepting=false;if(!closed&&mine==generation){draftAlignment=null;alignmentSeconds=alignmentWatch.Elapsed.TotalSeconds;reader.SetAlignment(alignment);}}
     }
    }
    else
@@ -226,9 +250,16 @@ public sealed class OverlayWindow:Window
     string language=selected==ReadingMode.English?"en":"zh";var current=language=="zh"?chinese:english;
     if(!current.ContainsKey(selection.Id))
     {
-     sent=true;SetStatus("正在整体翻译选区…");var result=await api.TranslateAsync(profile,key,regions,language,null,token);
+     SetStatus("正在整体翻译选区…");bool accepting=true;
+     var progress=new Progress<Dictionary<string,string>>(part=>
+     {
+      if(!accepting||!AcceptProgress())return;
+      var draft=language=="zh"?draftChinese:draftEnglish;foreach(var pair in part)if(pair.Value.Length>0)draft[pair.Key]=pair.Value;
+      SetStatus("正在生成译文，可先阅读已出现的内容…");Render();
+     });
+     var result=await api.TranslateAsync(profile,key,regions,language,progress,token);accepting=false;
      token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
-     foreach(var pair in result)current[pair.Key]=pair.Value;cache[fingerprint+language]=new(current);Render();
+     textSeconds=watch.Elapsed.TotalSeconds;ClearDraft();foreach(var pair in result)current[pair.Key]=pair.Value;cache[fingerprint+language]=new(current);Render();
     }
    }
    while(cache.Count>6)cache.Remove(cache.Keys.First());while(alignmentCache.Count>3)alignmentCache.Remove(alignmentCache.Keys.First());
@@ -239,7 +270,9 @@ public sealed class OverlayWindow:Window
     else if(profile.Protocol==ApiProtocol.QwenMt)hint="Qwen-MT 接口仅提供翻译；通用模型接口支持联动高亮";
     else{hint="完整译文已保留 · "+(alignmentProblem??"模型未提供有效的词组对应关系，可重试高亮");retryButton.Content="重试高亮";retryButton.Visibility=Visibility.Visible;}
    }
-   SetStatus((selected==ReadingMode.Bilingual?"中英对照":selected==ReadingMode.Chinese?"中文译文":"英文译文")+(sent?$" · {watch.Elapsed.TotalSeconds:F1} 秒":" · 已复用译文")+" · "+hint);
+   string timing=textSeconds is double seconds?$" · 正文 {seconds:F1} 秒":" · 已复用译文";
+   if(alignmentSeconds is double alignSeconds)timing+=$" · 高亮 {alignSeconds:F1} 秒";
+   SetStatus((selected==ReadingMode.Bilingual?"中英对照":selected==ReadingMode.Chinese?"中文译文":"英文译文")+timing+" · "+hint);
    if(!manualBounds&&!autoFitted&&reader.VerticalOffset<1&&reader.Selection.IsEmpty)FitToContent();
   }
   catch(OperationCanceledException){if(!closed&&mine==generation)SetStatus("已停止翻译，已完成内容已保留。");}
@@ -247,12 +280,12 @@ public sealed class OverlayWindow:Window
   finally
   {
    if(ReferenceEquals(translating,request))translating=null;request.Dispose();
-   if(!closed&&mine==generation){busy=false;cancelButton.Visibility=Visibility.Collapsed;Render();}
+   if(!closed&&mine==generation){ClearDraft();busy=false;cancelButton.Visibility=Visibility.Collapsed;Render();}
   }
  }
  public void CancelTranslation()
  {
-  generation++;translating?.Cancel();busy=false;cancelButton.Visibility=Visibility.Collapsed;retryButton.Visibility=regions.Count>0?Visibility.Visible:Visibility.Collapsed;
+  generation++;translating?.Cancel();ClearDraft();busy=false;cancelButton.Visibility=Visibility.Collapsed;retryButton.Visibility=regions.Count>0?Visibility.Visible:Visibility.Collapsed;
   retryButton.Content=Bilingual&&chinese.Count>0&&english.Count>0?"重试高亮":"重试";
   Render();SetStatus("已停止翻译，已完成内容已保留。重试只补充缺失内容。");
  }

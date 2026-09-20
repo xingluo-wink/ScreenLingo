@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -50,8 +51,46 @@ static class LinkedSelectionTests
    var before=reader.LinkedHighlightRects.ToArray();reader.ScrollToVerticalOffset(160);await Task.Delay(30);var after=reader.LinkedHighlightRects;
    check("wrapped counterpart highlights every rendered line",before.Length>=4&&before.All(r=>r.Width>0&&r.Width<=reader.ActualWidth),new{lines=before.Length});
    check("scrolling moves highlight geometry with the text",after.Count==before.Length&&after[0].Top<before[0].Top-100,new{before=before[0].Top,after=after[0].Top});
+   var reference=CharacterRectangles(Find(reader,longEn),new(0,longEn.Length));
+   check("line-based geometry agrees with per-character reference",Same(reference,after),new{referenceLines=reference.Count,actualLines=after.Count});
+   var cached=reader.LinkedHighlightRects;check("unchanged selection reuses cached highlight geometry",ReferenceEquals(cached,reader.LinkedHighlightRects),null);
+   const int repeats=20;var watch=Stopwatch.StartNew();
+   for(int i=0;i<repeats;i++)CharacterRectangles(Find(reader,longEn),new(0,longEn.Length));
+   double oldMs=watch.Elapsed.TotalMilliseconds/repeats;watch.Restart();
+   var run=Find(reader,longEn);IReadOnlyList<(Run Text,TextSpan Span)> ranges=[(run,new(0,longEn.Length))];
+   for(int i=0;i<repeats;i++)_=LinkedTextAdorner.Rectangles(ranges);
+   double newMs=watch.Elapsed.TotalMilliseconds/repeats;
+   watch.Restart();for(int i=0;i<1000;i++)_=reader.LinkedHighlightRects;double cachedMs=watch.Elapsed.TotalMilliseconds/1000;
+   check("long phrase selection performance sample",reader.LinkedHighlightRects.Count==reference.Count,new{characters=longEn.Length,repeats,oldPerCharacterMs=oldMs,newPerLineMs=newMs,cachedMs,speedup=oldMs/newMs});
+   foreach(string text in new[]{"First line.\nSecond 🙂 line, with spaces.\nLast line.","First line.\r\nSecond line with spaces.\r\nLast line."})
+   {
+    en["b1"]=text;reader.Present(regions,zh,en,ReadingMode.Bilingual,false,24,false);reader.SetAlignment(new(text,longZh,[new(new(0,text.Length),new(0,longZh.Length))]));await Task.Delay(20);
+    Select(reader,longZh,0,longZh.Length);
+    var expectedRects=CharacterRectangles(Find(reader,text),new(0,text.Length));var actualRects=reader.LinkedHighlightRects;
+    // The old character algorithm left a hole over surrogate-pair emoji.
+    // Every ordinary glyph must still be covered, now by three complete lines.
+    bool covered=actualRects.Count==3&&expectedRects.All(expected=>actualRects.Any(actual=>Math.Abs(actual.Top-expected.Top)<1&&actual.Left<=expected.Left+1&&actual.Right>=expected.Right-1));
+    check("line geometry covers explicit newline selection "+(text.Contains('\r')?"CRLF":"LF and emoji"),covered,new{lines=actualRects.Count});
+   }
   }
   finally{window.Close();}
+ }
+ static bool Same(IReadOnlyList<Rect> a,IReadOnlyList<Rect> b)=>a.Count==b.Count&&a.Zip(b).All(pair=>Math.Abs(pair.First.Left-pair.Second.Left)<1&&Math.Abs(pair.First.Top-pair.Second.Top)<1&&Math.Abs(pair.First.Width-pair.Second.Width)<1&&Math.Abs(pair.First.Height-pair.Second.Height)<1);
+ // The previous rendering algorithm is retained only as a test oracle/benchmark.
+ static List<Rect> CharacterRectangles(Run text,TextSpan span)
+ {
+  var result=new List<Rect>();
+  for(int i=span.Start;i<span.End;i++)
+  {
+   if(char.IsControl(text.Text[i]))continue;
+   var a=text.ContentStart.GetPositionAtOffset(i,LogicalDirection.Forward)!.GetCharacterRect(LogicalDirection.Forward);
+   var b=text.ContentStart.GetPositionAtOffset(i+1,LogicalDirection.Backward)!.GetCharacterRect(LogicalDirection.Backward);
+   if(a.IsEmpty||b.IsEmpty||Math.Abs(a.Top-b.Top)>1||b.Right<=a.Left)continue;
+   var rect=new Rect(a.Left,a.Top,b.Right-a.Left,Math.Max(a.Height,b.Height));
+   if(result.Count>0&&Math.Abs(result[^1].Top-rect.Top)<1&&rect.Left<=result[^1].Right+1&&rect.Right>=result[^1].Left){var previous=result[^1];previous.Union(rect);result[^1]=previous;}
+   else result.Add(rect);
+  }
+  return result;
  }
  static Run Find(ReadingContent reader,string text)
  {

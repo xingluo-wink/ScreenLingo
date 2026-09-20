@@ -67,6 +67,7 @@ static class Program
  }
  static async Task ApiTests()
  {
+  await StreamingTests.Run(Check);
   await BilingualTests.Protocols(Check);
   foreach(var protocol in Enum.GetValues<ApiProtocol>())
   {
