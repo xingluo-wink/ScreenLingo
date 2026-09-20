@@ -1,4 +1,4 @@
-# 屏译 ScreenLingo 0.3.2
+# 屏译 ScreenLingo 0.3.3
 
 Windows 框选翻译工具：本地识别中英文，使用你配置的 API 翻译，在可拖动、可缩放的阅读窗口中显示译文。
 
@@ -41,7 +41,7 @@ Windows 框选翻译工具：本地识别中英文，使用你配置的 API 翻�
 
 通用模型首次双语生成正文后，单独补充词组对应关系；模型确认原文已是完整英文或简体中文时，直接复用原文，减少重复生成。如果某个语言已翻译，会保留并复用现有正文。对应关系也逐步返回，已就绪的词组可立即选中高亮，无需等待全部对应完成；对应关系不会把正文拆开。左键拖选任一语言，另一语言的对应词组会同步高亮，支持重复词、语序不同和跨行选取。高亮按模型给出的词组粒度显示，准确度取决于模型。
 
-对应关系使用精简的数据格式。如果高亮结果被截断，会用更少的词组自动重试一次，保持你配置的输出上限。高亮超时、截断或格式不正确时，已经完成的双语正文仍可阅读和复制；点击「重试高亮」只补充对应关系，不重新翻译正文。生成高亮过程中也可以停止，保留完整译文。较长内容的词组对应可能更粗，准确度取决于模型。
+对应关系使用精简的数据格式。如果高亮结果被截断，已完整生成且通过定位校验的词组会继续可用，并标明其余未完成；没有有效对应时，最多以较少词组自动重试一次。若只有思考内容而没有任何结果，会直接说明原因，避免无效重复请求。高亮超时、截断或格式不正确时，已经完成的双语正文仍可阅读和复制；点击「重试高亮」只重新请求对应关系，不重新翻译正文。生成高亮过程中也可以停止，保留完整译文。较长内容的词组对应可能更粗，准确度取决于模型。
 
 生成对应关系需要单独的 API 请求；选词和高亮在本地执行，不新增请求。高亮按显示行计算并缓存位置，减少长文本拖选时的重复计算。底部分别显示正文与高亮的准备耗时。如果正文自身仍被截断，可在 API 高级设置中提高输出 Token 上限。同一模式翻译进行中，重复点击不会重启请求。切换字号、移动窗口、查看原图不会调用 API；关闭阅读窗口后缓存即丢弃。
 
@@ -61,7 +61,9 @@ Windows 框选翻译工具：本地识别中英文，使用你配置的 API 翻�
 
 「高级设置」提供超时、输出 Token 上限、流式显示开关、翻译风格和额外 JSON 参数。不同模型所需的参数可自行填写，例如 `{"temperature":0.2}`。软件保留对输入、模型、目标语言、流式请求等字段的控制。一般模型需能返回完整 JSON；返回缺块、空内容或被截断时会显示错误，不会悄悄把遗漏当作成功。若服务商不支持流式请求，可关闭「边生成边显示译文与高亮」；普通 JSON 返回仍可兼容。Qwen-MT 保持完整返回。
 
-流式解析依据 [OpenAI 流式响应说明](https://developers.openai.com/api/docs/guides/streaming-responses)、[Anthropic 流式消息说明](https://platform.claude.com/docs/en/build-with-claude/streaming)和 [Gemini 生成接口说明](https://ai.google.dev/api/generate-content)。仅显示正文，不显示模型的思考内容。软件不自动更改模型或推理参数；开始输出前的等待仍由所选服务与模型决定。
+模型名称下方的「快速模式」默认开启，旧配置无需重填。目前对 Chat Completions 协议的 `deepseek-flash`、`deepseek-v4-flash`、`deepseek-v4.1-flash`、`deepseek-v4-pro` 添加 `thinking.type=disabled`；支持这些名称带服务商前缀的形式。依据 [DeepSeek 接口说明](https://api-docs.deepseek.com/api/create-chat-completion/)，其默认思考模式可能在生成正文前耗尽输出预算。直接关闭思考适合短文翻译和词对应，输出 Token 上限保持你的配置。关闭快速模式恢复服务商默认行为。额外 JSON 中手填的 `thinking`、`reasoning`、`reasoning_effort` 或 `enable_thinking` 优先，不会被覆盖；其它模型与协议不自动添加思考参数。
+
+流式解析依据 [OpenAI 流式响应说明](https://developers.openai.com/api/docs/guides/streaming-responses)、[Anthropic 流式消息说明](https://platform.claude.com/docs/en/build-with-claude/streaming)和 [Gemini 生成接口说明](https://ai.google.dev/api/generate-content)。仅显示正文，不显示模型的思考内容。实际速度与翻译质量仍取决于所选服务与模型。
 
 Qwen-MT 使用专用翻译参数，将整个选区作为一段翻译；双语分别请求两个语言。此接口目前只提供整段翻译，不提供联动高亮的词组对应关系。联动高亮支持 Chat Completions、Responses、Anthropic Messages 和 Gemini GenerateContent 接口，需要所配模型能够遵循 JSON 输出要求。
 

@@ -12,7 +12,7 @@ internal static class StreamingResponse
     {
         using var reader = new StreamReader(stream, Encoding.UTF8);
         var text = new StringBuilder(); var data = new StringBuilder();
-        var clock = Stopwatch.StartNew(); long last = -125; int received = 0; bool completed = false;
+        var clock = Stopwatch.StartNew(); long last = -125; int received = 0; bool completed = false, sawReasoning = false;
         void Publish(bool force = false)
         {
             if (text.Length == 0 || preview is null || (!force && clock.ElapsedMilliseconds - last < 125)) return;
@@ -30,7 +30,7 @@ internal static class StreamingResponse
             if (protocol == ApiProtocol.Responses)
             {
                 if (type == "response.output_text.delta") text.Append(root.GetProperty("delta").GetString());
-                if (type == "response.incomplete") throw new OutputTruncatedException();
+                if (type == "response.incomplete") throw new OutputTruncatedException(text.ToString());
                 if (type == "response.completed")
                 {
                     completed = true;
@@ -45,7 +45,7 @@ internal static class StreamingResponse
                 if (type == "content_block_delta" && root.TryGetProperty("delta", out var delta) && delta.GetProperty("type").GetString() == "text_delta")
                     text.Append(delta.GetProperty("text").GetString());
                 if (type == "message_delta" && root.GetProperty("delta").TryGetProperty("stop_reason", out var stop) && stop.GetString() == "max_tokens")
-                    throw new OutputTruncatedException();
+                    throw new OutputTruncatedException(text.ToString());
                 if (type == "message_stop") completed = true;
             }
             else if (protocol == ApiProtocol.Gemini)
@@ -58,7 +58,7 @@ internal static class StreamingResponse
                             if (part.TryGetProperty("text", out var partText) && !(part.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.True)) text.Append(partText.GetString());
                     if (candidate.TryGetProperty("finishReason", out var reason))
                     {
-                        if (reason.GetString() == "MAX_TOKENS") throw new OutputTruncatedException();
+                        if (reason.GetString() == "MAX_TOKENS") throw new OutputTruncatedException(text.ToString());
                         if (reason.GetString() != "STOP") throw new IOException("模型停止了生成，未返回完整译文。");
                         completed = true;
                     }
@@ -67,10 +67,11 @@ internal static class StreamingResponse
             else if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
             {
                 var choice = choices[0];
+                if (choice.TryGetProperty("delta", out var reasoningDelta) && reasoningDelta.TryGetProperty("reasoning_content", out var thought) && thought.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(thought.GetString())) sawReasoning = true;
                 if (choice.TryGetProperty("delta", out var delta) && delta.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String) text.Append(content.GetString());
                 if (choice.TryGetProperty("finish_reason", out var finish) && finish.ValueKind == JsonValueKind.String)
                 {
-                    if (finish.GetString() == "length") throw new OutputTruncatedException();
+                    if (finish.GetString() == "length") throw new OutputTruncatedException(text.ToString(), sawReasoning && string.IsNullOrWhiteSpace(text.ToString()));
                     if (finish.GetString() != "stop") throw new IOException("模型停止了生成，未返回完整译文。");
                     completed = true;
                 }

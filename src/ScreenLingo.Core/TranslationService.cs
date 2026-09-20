@@ -111,14 +111,29 @@ public sealed class TranslationService : IDisposable
                 using var json = JsonDocument.Parse(Unfence(raw));
                 return BilingualAlignment.Parse(json.RootElement, english, chinese);
             }
-            catch (OutputTruncatedException) when (attempt == 0)
+            catch (OutputTruncatedException ex)
             {
+                var valid = JsonPreview.Alignment(ex.PartialText ?? "", english, chinese);
+                if (valid?.Phrases.Count > 0) return new(english, chinese, valid.Phrases, isPartial: true);
+                // Shrinking the answer cannot fix a budget exhausted by thinking.
+                if (ex.ReasoningOnly || attempt > 0) throw;
                 // Retry only optional metadata, once, with a smaller response.
                 // Never increase the user's configured token limit.
                 maximumPairs = Math.Max(2, maximumPairs / 2);
             }
             catch (JsonException) { throw new InvalidDataException("词组对应关系格式不正确，完整译文已保留。"); }
         }
+    }
+
+    static void ApplyFastMode(ApiProfile profile, JsonObject body)
+    {
+        // DeepSeek Chat supports thinking.type on its official endpoint and
+        // compatible gateways. Other models/protocols retain their own defaults.
+        string model = profile.Model.Trim().Split('/')[^1].ToLowerInvariant();
+        bool supported = profile.Protocol == ApiProtocol.ChatCompletions && model is
+            "deepseek-flash" or "deepseek-v4-flash" or "deepseek-v4.1-flash" or "deepseek-v4-pro";
+        if (!profile.FastMode || !supported || new[] { "thinking", "reasoning", "reasoning_effort", "enable_thinking" }.Any(body.ContainsKey)) return;
+        body["thinking"] = new JsonObject { ["type"] = "disabled" };
     }
 
     public static void ValidateProfile(ApiProfile p)
@@ -168,6 +183,7 @@ public sealed class TranslationService : IDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(p.TimeoutSeconds));
         bool streaming = p.StreamResponses && preview is not null && p.Protocol != ApiProtocol.QwenMt;
         var body = JsonNode.Parse(string.IsNullOrWhiteSpace(p.ExtraBody) ? "{}" : p.ExtraBody)!.AsObject();
+        ApplyFastMode(p, body);
         // Protocol-owned fields cannot be replaced by advanced JSON.
         foreach (string field in new[] { "messages", "input", "instructions", "contents", "system", "systemInstruction", "stream", "model", "translation_options" })
             body.Remove(field);
@@ -251,24 +267,32 @@ public sealed class TranslationService : IDisposable
         {
             if (protocol == ApiProtocol.Anthropic)
             {
-                if (root.TryGetProperty("stop_reason", out var stop) && stop.GetString() == "max_tokens") throw new OutputTruncatedException();
-                return string.Concat(root.GetProperty("content").EnumerateArray().Where(e => e.GetProperty("type").GetString() == "text").Select(e => e.GetProperty("text").GetString()));
+                var text = string.Concat(root.GetProperty("content").EnumerateArray().Where(e => e.GetProperty("type").GetString() == "text").Select(e => e.GetProperty("text").GetString()));
+                if (root.TryGetProperty("stop_reason", out var stop) && stop.GetString() == "max_tokens") throw new OutputTruncatedException(text);
+                return text;
             }
             if (protocol == ApiProtocol.Gemini)
             {
-                if (root.GetProperty("candidates")[0].TryGetProperty("finishReason", out var reason) && reason.GetString() == "MAX_TOKENS") throw new OutputTruncatedException();
-                return string.Concat(root.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts").EnumerateArray().Where(e => e.TryGetProperty("text", out _) && !(e.TryGetProperty("thought", out var t) && t.ValueKind == JsonValueKind.True)).Select(e => e.GetProperty("text").GetString()));
+                var candidate = root.GetProperty("candidates")[0];
+                string text = candidate.TryGetProperty("content", out var content) && content.TryGetProperty("parts", out var parts)
+                    ? string.Concat(parts.EnumerateArray().Where(e => e.TryGetProperty("text", out _) && !(e.TryGetProperty("thought", out var t) && t.ValueKind == JsonValueKind.True)).Select(e => e.GetProperty("text").GetString())) : "";
+                if (candidate.TryGetProperty("finishReason", out var reason) && reason.GetString() == "MAX_TOKENS") throw new OutputTruncatedException(text);
+                return text;
             }
             if (protocol == ApiProtocol.Responses)
             {
-                if (root.TryGetProperty("status", out var status) && status.GetString() == "incomplete") throw new OutputTruncatedException();
-                if (root.TryGetProperty("output_text", out var direct)) return direct.GetString() ?? "";
-                return string.Concat(root.GetProperty("output").EnumerateArray().Where(e => e.TryGetProperty("type", out var t) && t.GetString() == "message")
+                string text = root.TryGetProperty("output_text", out var direct) ? direct.GetString() ?? "" :
+                    string.Concat(root.GetProperty("output").EnumerateArray().Where(e => e.TryGetProperty("type", out var t) && t.GetString() == "message")
                     .SelectMany(e => e.GetProperty("content").EnumerateArray()).Where(e => e.GetProperty("type").GetString() == "output_text").Select(e => e.GetProperty("text").GetString()));
+                if (root.TryGetProperty("status", out var status) && status.GetString() == "incomplete") throw new OutputTruncatedException(text);
+                return text;
             }
             var choice = root.GetProperty("choices")[0];
-            if (choice.TryGetProperty("finish_reason", out var finish) && finish.GetString() == "length") throw new OutputTruncatedException();
-            return choice.GetProperty("message").GetProperty("content").GetString() ?? "";
+            var message = choice.GetProperty("message");
+            string answer = message.TryGetProperty("content", out var answerText) ? answerText.GetString() ?? "" : "";
+            if (choice.TryGetProperty("finish_reason", out var finish) && finish.GetString() == "length")
+                throw new OutputTruncatedException(answer, string.IsNullOrWhiteSpace(answer) && message.TryGetProperty("reasoning_content", out var thinking) && !string.IsNullOrWhiteSpace(thinking.GetString()));
+            return answer;
         }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException)
         { throw new InvalidDataException("响应格式与所选接口类型不一致，或模型没有返回文本。"); }

@@ -148,6 +148,16 @@ static class ReaderExperienceTests
    check("cancelled streaming text is requested again instead of cached",streamCancelHost.Requests.Count==calls+2&&streamCancel.Reader.PlainText.Contains("EN b3"),null);
   }
   finally{streamCancel.Close();}
+  var partialLinksHost=new FakeHost(3){TruncateAlignment=1,PartialPairs=true};var partialLinks=NewWindow(partialLinksHost);partialLinks.Show();
+  try
+  {
+   await Ready(partialLinks);await partialLinks.SelectModeAsync(ReadingMode.Bilingual);
+   LinkedSelectionTests.SelectSnippet(partialLinks.Reader,"中文 b1。");
+   check("truncated alignment retains useful highlights and complete text",partialLinks.Reader.LinkedSelectionLabel=="对应英文：EN b1."&&partialLinks.Reader.PlainText.Contains("中文 b3")&&partialLinksHost.Requests.Count==2,null);
+   int calls=partialLinksHost.Requests.Count;await partialLinks.TranslateAsync();LinkedSelectionTests.SelectSnippet(partialLinks.Reader,"中文 b3。");
+   check("partial alignment can be retried without retranslating text",partialLinksHost.Requests.Count==calls+1&&partialLinksHost.Requests[^1].Language=="align"&&partialLinks.Reader.LinkedSelectionLabel=="对应英文：EN b3.",null);
+  }
+  finally{partialLinks.Close();}
   await LinkedSelectionTests.Run(check,work);
  }
  static OverlayWindow NewWindow(FakeHost host)
@@ -168,7 +178,7 @@ static class ReaderExperienceTests
  sealed class FakeHost(int count):IReaderHost
  {
   public AppSettings Settings{get;}=new(){Profiles=[new(){BaseUrl="https://example.com/v1",Model="mock-reader"}],ReaderTopmost=false};
-  public List<Request> Requests{get;}=[];public bool SlowSecond,SlowAlignment,Streaming;public int Delay=12,TruncateAlignment;
+  public List<Request> Requests{get;}=[];public bool SlowSecond,SlowAlignment,Streaming,PartialPairs;public int Delay=12,TruncateAlignment;
   public TaskCompletionSource TextGate=new(TaskCreationOptions.RunContinuationsAsynchronously),AlignmentGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
   public int Count=>count;
   public void SaveSettings(){}public void ShowSettings(){}
@@ -191,6 +201,7 @@ static class ReaderExperienceTests
    string zh=knownZh??string.Join(" ",Enumerable.Range(1,host.Count).Select(i=>$"中文 b{i}。调整字号后文字会自然换行。拖动窗口后保持位置，可以直接划选复制，末尾完整。"));
    bool truncated=align&&host.TruncateAlignment-->0;
    var content=truncated?"{\"pairs\":[[":align?JsonSerializer.Serialize(new{pairs=Enumerable.Range(1,host.Count).Select(i=>new[]{$"EN b{i}.",$"中文 b{i}。"})}):bilingual?JsonSerializer.Serialize(new{english=input.RootElement.GetProperty("existingEnglish").GetString()??en,chinese=zh}):JsonSerializer.Serialize(new{translations=ids.Select(id=>new{id,text=english?en:zh})});
+   if(truncated&&host.PartialPairs)content="{\"pairs\":[[\"EN b1.\",\"中文 b1。\"],[";
    if(host.Streaming&&(bilingual||align))
    {
     int split=align?content.IndexOf("],",StringComparison.Ordinal)+1:content.IndexOf("\"chinese\"",StringComparison.Ordinal)+40;

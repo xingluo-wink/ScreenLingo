@@ -1,5 +1,15 @@
 # Verification notes
 
+## v0.3.3
+
+Fixed the repeated alignment-limit failure for DeepSeek thinking models. A default-on, per-profile Fast Mode checkbox sends thinking.type=disabled for the supported DeepSeek Flash/V4 model names on Chat Completions, including provider-prefixed names. Explicit thinking/reasoning parameters still win, other models and protocols remain unchanged, and the configured output cap is retained. Old settings acquire the default in memory without rewriting the API credentials.
+
+Thinking-only token exhaustion now gets a specific error and does not trigger the ineffective smaller-answer retry. When a response is truncated after producing complete phrase pairs, valid pairs survive and remain usable, with a partial-completion status. A retry requests alignment again without retranslating the complete text. Text translation still rejects truncated drafts.
+
+77 core/protocol checks and 54 WPF reader checks passed. New cases cover model/protocol compatibility, explicit overrides, default migration, reasoning-only exhaustion in streaming and buffered responses, preservation of complete pairs in all four streaming formats, buffered partial metadata, and reader recovery without retranslating.
+
+Unlike the previous mock-only checks, this fix also used three bounded real API requests with a fixed synthetic bilingual sample, without sending screenshots or user-captured text. Baseline: 18.70 seconds, finish_reason=length, all 4096 completion tokens counted as reasoning, zero answer characters. Same fixture with thinking disabled: 4.48 seconds, 150 completion tokens, 20 pairs. The patched production TranslationService returned 24 validated pairs in 5.26 seconds, with a selected English phrase linked to the Chinese counterpart. These are individual observations on a configured compatible service, not a general latency or alignment-accuracy guarantee. Endpoint, credentials, raw reasoning and configuration are excluded from the public artifacts.
+
 ## v0.3.2
 
 Translation text and phrase links are displayed progressively through SSE for Chat Completions, Responses, Anthropic and Gemini. Ordinary JSON responses remain supported, and each API profile has a streaming toggle; Qwen-MT retains its non-streaming protocol. For bilingual output the model can identify an already-English or Simplified-Chinese source so the exact source is reused instead of regenerated. Completed text is validated before caching; drafts are discarded on cancellation, disconnection, malformed final JSON or token truncation. Fully closed phrase pairs can be selected while later pairs are still arriving. Native selection triggers no API request.

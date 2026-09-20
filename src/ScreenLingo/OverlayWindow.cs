@@ -221,7 +221,7 @@ public sealed class OverlayWindow:Window
      textSeconds=watch.Elapsed.TotalSeconds;ClearDraft();english[selection.Id]=result.English;chinese[selection.Id]=result.Chinese;
      cache[fingerprint+"en"]=new(english);cache[fingerprint+"zh"]=new(chinese);Render();
     }
-    if(profile.Protocol!=ApiProtocol.QwenMt&&(alignment is null||alignment.Phrases.Count==0))
+    if(profile.Protocol!=ApiProtocol.QwenMt&&(alignment is null||alignment.Phrases.Count==0||alignment.IsPartial))
     {
      if(!manualBounds&&!autoFitted&&reader.VerticalOffset<1&&reader.Selection.IsEmpty)FitToContent();
      SetStatus("译文已完成 · 正在补充词组高亮，可先阅读或复制");var alignmentWatch=Stopwatch.StartNew();bool accepting=true;
@@ -240,7 +240,7 @@ public sealed class OverlayWindow:Window
      catch(Exception ex)
      {
       token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
-      alignmentProblem=ex is OutputTruncatedException?"高亮结果仍超出输出上限，可重试高亮":"高亮暂未就绪："+ex.Message;
+      alignmentProblem=ex is OutputTruncatedException{ReasoningOnly:true}?ex.Message:ex is OutputTruncatedException?"高亮结果超出输出上限，可重试高亮":"高亮暂未就绪："+ex.Message;
      }
      finally{accepting=false;if(!closed&&mine==generation){draftAlignment=null;alignmentSeconds=alignmentWatch.Elapsed.TotalSeconds;reader.SetAlignment(alignment);}}
     }
@@ -266,7 +266,11 @@ public sealed class OverlayWindow:Window
    string hint="可划选复制文字";
    if(selected==ReadingMode.Bilingual)
    {
-    if(alignment?.Phrases.Count>0)hint="选中词句，另一语言同步高亮";
+    if(alignment?.Phrases.Count>0)
+    {
+     hint=alignment.IsPartial?$"已有 {alignment.Phrases.Count} 组对应可用 · 其余未完成，可重试高亮":"选中词句，另一语言同步高亮";
+     if(alignment.IsPartial){retryButton.Content="重试高亮";retryButton.Visibility=Visibility.Visible;}
+    }
     else if(profile.Protocol==ApiProtocol.QwenMt)hint="Qwen-MT 接口仅提供翻译；通用模型接口支持联动高亮";
     else{hint="完整译文已保留 · "+(alignmentProblem??"模型未提供有效的词组对应关系，可重试高亮");retryButton.Content="重试高亮";retryButton.Visibility=Visibility.Visible;}
    }

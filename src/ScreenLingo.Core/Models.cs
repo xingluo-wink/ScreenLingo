@@ -20,6 +20,7 @@ public sealed class ApiProfile
     public int TimeoutSeconds { get; set; } = 60;
     public int MaxOutputTokens { get; set; } = 4096;
     public bool StreamResponses { get; set; } = true;
+    public bool FastMode { get; set; } = true;
     public string ExtraBody { get; set; } = "{}";
     public string Style { get; set; } = "忠实、自然，保留术语、数字、代码和网址，不添加解释。";
     public override string ToString() => Name;

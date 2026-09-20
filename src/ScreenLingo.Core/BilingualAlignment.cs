@@ -9,13 +9,19 @@ public readonly record struct TextSpan(int Start, int Length)
 }
 public record AlignedPhrase(TextSpan English, TextSpan Chinese);
 public record BilingualText(string English, string Chinese);
-public sealed class OutputTruncatedException() : IOException("输出被截断，请提高输出 Token 上限。");
+public sealed class OutputTruncatedException(string? partialText = null, bool reasoningOnly = false)
+    : IOException(reasoningOnly ? "模型的思考过程耗尽了输出上限，尚未生成结果。请开启快速模式，或在额外参数中关闭该模型的思考。" : "输出被截断，请提高输出 Token 上限。")
+{
+    public string? PartialText { get; } = partialText;
+    public bool ReasoningOnly { get; } = reasoningOnly;
+}
 
-public sealed class BilingualAlignment(string english, string chinese, IReadOnlyList<AlignedPhrase> phrases)
+public sealed class BilingualAlignment(string english, string chinese, IReadOnlyList<AlignedPhrase> phrases, bool isPartial = false)
 {
     public string English { get; } = english;
     public string Chinese { get; } = chinese;
     public IReadOnlyList<AlignedPhrase> Phrases { get; } = phrases;
+    public bool IsPartial { get; } = isPartial;
 
     public IReadOnlyList<TextSpan> Match(string language, int start, int length)
     {

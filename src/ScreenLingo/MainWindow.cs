@@ -10,6 +10,7 @@ public sealed class MainWindow:Window
  readonly TextBox name=new(),url=new(),model=new(),timeout=new(),tokens=new(),extra=new(){AcceptsReturn=true,Height=88,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,FontFamily=new FontFamily("Consolas")},style=new(){AcceptsReturn=true,Height=60,TextWrapping=TextWrapping.Wrap};
  readonly PasswordBox key=new();
  readonly CheckBox streaming=new(){Content="边生成边显示译文与高亮",Margin=new Thickness(0,10,0,6)};
+ readonly CheckBox fastMode=new(){Content="快速模式（适配 DeepSeek，关闭深度思考）",Margin=new Thickness(0,10,0,6)};
  readonly ComboBox protocol=new(),idle=new();
  readonly TextBox hotkey=new(){IsReadOnly=true};
  readonly TextBlock status=Ui.Text("填写 API 后点击「测试翻译」，或直接框选体验本地文字识别。",12,Ui.Muted);
@@ -19,7 +20,7 @@ public sealed class MainWindow:Window
  {
   app=application;Title="屏译 ScreenLingo";Width=920;Height=Math.Min(850,SystemParameters.WorkArea.Height-50);MinWidth=760;MinHeight=580;WindowStartupLocation=WindowStartupLocation.CenterScreen;
   var root=new Grid{Margin=new Thickness(28,22,28,18)};root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new());root.RowDefinitions.Add(new(){Height=GridLength.Auto});Content=root;
-  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.3.2  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
+  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.3.3  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
   var brand=new StackPanel();brand.Children.Add(Ui.Text("屏译  ScreenLingo",27));brand.Children.Add(Ui.Text("框选眼前的内容，用熟悉的语言阅读。",12,Ui.Muted));heading.Children.Add(brand);root.Children.Add(heading);
   var hero=new DockPanel();var capture=Ui.Btn("＋  框选屏幕",()=>app.BeginCapture(),true);capture.MinWidth=155;capture.FontSize=15;DockPanel.SetDock(capture,Dock.Right);hero.Children.Add(capture);
   var introduction=new StackPanel();introduction.Children.Add(Ui.Text("随时框选，即刻开始",16));introduction.Children.Add(Ui.Text("中文 / English · 中英双语 · 字号可调 · 截图独立保存",12,Ui.Muted));hero.Children.Add(introduction);
@@ -50,6 +51,7 @@ public sealed class MainWindow:Window
   Ui.Field(form,"配置名称",name);Ui.Field(form,"接口类型",protocol);
   Ui.Field(form,"API 地址",url,"填写服务商提供的基础地址（通常含 /v1）；也支持完整接口地址。");
   Ui.Field(form,"API Key",key,"密钥在本机加密保存；本机免密接口可以留空。");Ui.Field(form,"模型名称",model,"按服务商提供的模型 ID 原样填写。");
+  form.Children.Add(fastMode);form.Children.Add(Ui.Text("默认开启，适用于 DeepSeek Flash / V4 的 Chat 接口。其它模型不自动改参数；手填思考参数优先。",11,Ui.Muted));
   var advanced=new StackPanel();Ui.Field(advanced,"请求超时（秒）",timeout);Ui.Field(advanced,"最大输出 Token",tokens);
   advanced.Children.Add(streaming);advanced.Children.Add(Ui.Text("默认开启。接口不支持流式响应时可关闭；Qwen-MT 使用完整返回。",11,Ui.Muted));
   Ui.Field(advanced,"翻译风格",style);Ui.Field(advanced,"额外请求参数（JSON）",extra,"例如 {\"temperature\":0.2}。模型、输入和目标语言由软件管理。");
@@ -95,6 +97,7 @@ public sealed class MainWindow:Window
   if(loading)return;StoreDraft();current=profiles.SelectedItem as ApiProfile;if(current is null)return;
   name.Text=current.Name;url.Text=current.BaseUrl;model.Text=current.Model;protocol.SelectedIndex=(int)current.Protocol;timeout.Text=current.TimeoutSeconds.ToString();tokens.Text=current.MaxOutputTokens.ToString();extra.Text=current.ExtraBody;style.Text=current.Style;
   streaming.IsChecked=current.StreamResponses;
+  fastMode.IsChecked=current.FastMode;
   try{key.Password=KeyVault.Unprotect(current.ProtectedKey);}catch(Exception ex){key.Password="";status.Text=ex.Message;}
  }
  void StoreDraft()
@@ -103,6 +106,7 @@ public sealed class MainWindow:Window
   current.Name=string.IsNullOrWhiteSpace(name.Text)?"我的 API":name.Text.Trim();current.BaseUrl=url.Text.Trim();current.Model=model.Text.Trim();current.Protocol=(ApiProtocol)Math.Max(0,protocol.SelectedIndex);current.ProtectedKey=KeyVault.Protect(key.Password);
   current.TimeoutSeconds=int.TryParse(timeout.Text,out var seconds)?seconds:60;current.MaxOutputTokens=int.TryParse(tokens.Text,out var count)?count:4096;current.ExtraBody=extra.Text;current.Style=style.Text;
   current.StreamResponses=streaming.IsChecked==true;
+  current.FastMode=fastMode.IsChecked==true;
  }
  void Save()
  {
