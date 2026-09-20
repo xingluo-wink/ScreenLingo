@@ -8,7 +8,8 @@ public readonly record struct TextSpan(int Start, int Length)
     public bool Overlaps(TextSpan other) => Start < other.End && other.Start < End;
 }
 public record AlignedPhrase(TextSpan English, TextSpan Chinese);
-public record BilingualResult(string English, string Chinese, BilingualAlignment Alignment);
+public record BilingualText(string English, string Chinese);
+public sealed class OutputTruncatedException() : IOException("输出被截断，请提高输出 Token 上限。");
 
 public sealed class BilingualAlignment(string english, string chinese, IReadOnlyList<AlignedPhrase> phrases)
 {
@@ -35,11 +36,12 @@ public sealed class BilingualAlignment(string english, string chinese, IReadOnly
     public static BilingualAlignment Parse(JsonElement root, string english, string chinese)
     {
         var pairs = new List<AlignedPhrase>();
-        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("alignment", out var items) || items.ValueKind != JsonValueKind.Array)
+        if (root.ValueKind != JsonValueKind.Object ||
+            (!root.TryGetProperty("pairs", out var items) && !root.TryGetProperty("alignment", out items)) || items.ValueKind != JsonValueKind.Array)
             return new(english, chinese, pairs);
         foreach (var item in items.EnumerateArray().Take(4000))
         {
-            if (item.ValueKind != JsonValueKind.Object) continue;
+            if (item.ValueKind != JsonValueKind.Object && !(item.ValueKind == JsonValueKind.Array && item.GetArrayLength() is 2 or 4)) continue;
             var en = Locate(item, "en", english); var zh = Locate(item, "zh", chinese);
             if (en is not null && zh is not null) pairs.Add(new(en.Value, zh.Value));
         }
@@ -48,11 +50,24 @@ public sealed class BilingualAlignment(string english, string chinese, IReadOnly
 
     static TextSpan? Locate(JsonElement item, string language, string text)
     {
-        if (!item.TryGetProperty(language, out var value) || value.ValueKind != JsonValueKind.String) return null;
+        JsonElement value, ordinal = default;
+        bool hasOrdinal;
+        if (item.ValueKind == JsonValueKind.Array)
+        {
+            int index = language == "en" ? 0 : 1; value = item[index];
+            hasOrdinal = item.GetArrayLength() == 4;
+            if (hasOrdinal) ordinal = item[index + 2];
+        }
+        else
+        {
+            if (!item.TryGetProperty(language, out value)) return null;
+            hasOrdinal = item.TryGetProperty(language + "Occurrence", out ordinal);
+        }
+        if (value.ValueKind != JsonValueKind.String) return null;
         string phrase = value.GetString()!;
         if (string.IsNullOrWhiteSpace(phrase)) return null;
         int occurrence = 0;
-        if (item.TryGetProperty(language + "Occurrence", out var ordinal) &&
+        if (hasOrdinal &&
             (ordinal.ValueKind != JsonValueKind.Number || !ordinal.TryGetInt32(out occurrence) || occurrence < 1)) return null;
         var matches = new List<int>();
         for (int offset = 0; offset <= text.Length - phrase.Length;)

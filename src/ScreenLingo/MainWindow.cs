@@ -18,7 +18,7 @@ public sealed class MainWindow:Window
  {
   app=application;Title="屏译 ScreenLingo";Width=920;Height=Math.Min(850,SystemParameters.WorkArea.Height-50);MinWidth=760;MinHeight=580;WindowStartupLocation=WindowStartupLocation.CenterScreen;
   var root=new Grid{Margin=new Thickness(28,22,28,18)};root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new(){Height=GridLength.Auto});root.RowDefinitions.Add(new());root.RowDefinitions.Add(new(){Height=GridLength.Auto});Content=root;
-  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.3.0  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
+  var heading=new DockPanel{Margin=new Thickness(0,0,0,20)};var version=Ui.Text("v0.3.1  /  LOCAL OCR",11,Ui.Muted);version.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(version,Dock.Right);heading.Children.Add(version);
   var brand=new StackPanel();brand.Children.Add(Ui.Text("屏译  ScreenLingo",27));brand.Children.Add(Ui.Text("框选眼前的内容，用熟悉的语言阅读。",12,Ui.Muted));heading.Children.Add(brand);root.Children.Add(heading);
   var hero=new DockPanel();var capture=Ui.Btn("＋  框选屏幕",()=>app.BeginCapture(),true);capture.MinWidth=155;capture.FontSize=15;DockPanel.SetDock(capture,Dock.Right);hero.Children.Add(capture);
   var introduction=new StackPanel();introduction.Children.Add(Ui.Text("随时框选，即刻开始",16));introduction.Children.Add(Ui.Text("中文 / English · 中英双语 · 字号可调 · 截图独立保存",12,Ui.Muted));hero.Children.Add(introduction);

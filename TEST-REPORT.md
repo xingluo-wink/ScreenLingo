@@ -1,5 +1,13 @@
 # Verification notes
 
+## v0.3.1
+
+Bilingual text and optional phrase alignment now use separate requests. Complete translations are saved and displayed before requesting alignment. Compact phrase arrays reduce alignment output overhead. On a token-limit response, only alignment is retried once with a smaller phrase limit; the configured output-token limit is retained. Repeated truncation, timeout, malformed metadata or cancellation does not discard completed translations. The reader offers an alignment-only retry.
+
+46 core/protocol checks and 42 WPF reader checks passed. New cases cover compact phrase parsing, truncation markers for Chat Completions/Responses/Anthropic/Gemini, a bounded metadata-only retry, retained token settings, visible text while alignment is pending, repeated truncation with both texts preserved, recovery without retranslating, and cancellation during alignment. A rendered degraded-state window was inspected. Existing selection, ordering, highlighting, clipboard, layout and cache checks still pass.
+
+All network responses were injected locally; no commercial API was contacted. These checks verify failure handling and request structure, not real-model translation quality. A model can still exceed the configured limit for the text itself; in that case the app continues to report truncation instead of presenting incomplete text as complete. OCR and physical desktop capture are unchanged.
+
 ## v0.3.0
 
 One capture is now one translation unit: OCR lines are joined in reading order without automatic paragraph splitting. A bilingual request to a general model returns complete English and Chinese text with optional phrase alignment metadata. Existing translations are preserved verbatim. Native text selection drives a separate highlight overlay, without modifying document text or making requests during selection. The Qwen-MT adapter supports whole-selection translation but not phrase alignment.

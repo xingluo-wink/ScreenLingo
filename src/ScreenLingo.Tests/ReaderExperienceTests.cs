@@ -41,7 +41,7 @@ static class ReaderExperienceTests
    window.Left=230;window.Top=170;window.Width=740;window.Height=430;await Task.Delay(30);window.UseManualBounds();var bounds=Native.ReaderBounds(window);
    await window.SelectModeAsync(ReadingMode.Bilingual);await Task.Delay(30);
    check("both complete languages appear in one selectable document",window.Reader.PlainText.Contains("EN b20")&&window.Reader.PlainText.Contains("中文 b20")&&!window.Reader.PlainText.Contains("尚无译文"),null);
-   int calls=host.Requests.Count;check("whole selection and bilingual alignment share one request",calls==1&&host.Requests[0].Ids.Length==1&&host.Requests[0].Input.Contains("Original 20."),new{calls});
+   int calls=host.Requests.Count;check("whole selection translates before separate compact alignment",calls==2&&host.Requests[0].Ids.Length==1&&host.Requests[0].Input.Contains("Original 20.")&&host.Requests[1].Language=="align",new{calls});
    LinkedSelectionTests.SelectSnippet(window.Reader,"中文 b1。");
    check("reader uses returned alignment without sending selection requests",window.Reader.LinkedSelectionLabel=="对应英文：EN b1."&&host.Requests.Count==calls,null);
    window.Reader.SelectAll();string selected=window.Reader.Selection.Text;var document=window.Reader.Document;
@@ -69,9 +69,32 @@ static class ReaderExperienceTests
    await Until(()=>partialHost.Requests.Count>=2);partial.CancelTranslation();await translation;
    check("cancel bilingual generation preserves the complete existing translation",!partial.IsTranslating&&partial.Reader.PlainText.Contains("中文 b20")&&!partial.Reader.PlainText.Contains("EN b20"),null);
    partialHost.SlowSecond=false;int before=partialHost.Requests.Count;await partial.TranslateAsync();
-   check("retry reuses the existing language and sends one whole selection",partialHost.Requests.Count==before+1&&partialHost.Requests[^1].Ids.Length==1&&partialHost.Requests[^1].KnownChinese&&partial.Reader.PlainText.Contains("EN b20"),partialHost.Requests[^1]);
+   check("retry reuses the existing language before adding alignment",partialHost.Requests.Count==before+2&&partialHost.Requests[^2].Ids.Length==1&&partialHost.Requests[^2].KnownChinese&&partialHost.Requests[^1].Language=="align"&&partial.Reader.PlainText.Contains("EN b20"),null);
   }
   finally{partial.Close();}
+
+  var limitedHost=new FakeHost(3){TruncateAlignment=2,SlowAlignment=true};var limited=NewWindow(limitedHost);limited.Show();
+  try
+  {
+   await Ready(limited);var translating=limited.SelectModeAsync(ReadingMode.Bilingual);
+   await Until(()=>limitedHost.Requests.Any(r=>r.Language=="align"));
+   check("complete bilingual text is visible while alignment is pending",limited.IsTranslating&&limited.Reader.PlainText.Contains("EN b3")&&limited.Reader.PlainText.Contains("中文 b3"),null);
+   await translating;
+   check("repeated alignment truncation keeps both complete texts",!limited.IsTranslating&&limited.Reader.PlainText.Contains("EN b3")&&limited.Reader.PlainText.Contains("中文 b3")&&limitedHost.Requests.Count==3,null);
+   Save((FrameworkElement)limited.Content,Path.Combine(work,"reader-0.3.1-truncated-alignment.png"));
+   limitedHost.SlowAlignment=false;int before=limitedHost.Requests.Count;await limited.TranslateAsync();
+   LinkedSelectionTests.SelectSnippet(limited.Reader,"中文 b1。");
+   check("retry after truncation requests alignment only",limitedHost.Requests.Count==before+1&&limitedHost.Requests[^1].Language=="align"&&limited.Reader.LinkedSelectionLabel=="对应英文：EN b1.",null);
+  }
+  finally{limited.Close();}
+
+  var stopHost=new FakeHost(3){SlowAlignment=true};var stop=NewWindow(stopHost);stop.Show();
+  try
+  {
+   await Ready(stop);var pending=stop.SelectModeAsync(ReadingMode.Bilingual);await Until(()=>stopHost.Requests.Any(r=>r.Language=="align"));stop.CancelTranslation();await pending;
+   check("cancelling optional alignment preserves both complete translations",!stop.IsTranslating&&stop.Reader.PlainText.Contains("EN b3")&&stop.Reader.PlainText.Contains("中文 b3"),null);
+  }
+  finally{stop.Close();}
 
   var raceHost=new FakeHost(3){Delay=140};var race=NewWindow(raceHost);race.Show();
   try
@@ -120,7 +143,7 @@ static class ReaderExperienceTests
  sealed class FakeHost(int count):IReaderHost
  {
   public AppSettings Settings{get;}=new(){Profiles=[new(){BaseUrl="https://example.com/v1",Model="mock-reader"}],ReaderTopmost=false};
-  public List<Request> Requests{get;}=[];public bool SlowSecond;public int Delay=12;
+  public List<Request> Requests{get;}=[];public bool SlowSecond,SlowAlignment;public int Delay=12,TruncateAlignment;
   public int Count=>count;
   public void SaveSettings(){}public void ShowSettings(){}
   public Task<OcrResponse> RecognizeAsync(byte[] image,CancellationToken token)=>Task.FromResult(new OcrResponse(Enumerable.Range(1,count).Select(i=>new OcrLine($"Original {i}.",20,i*40,180,24,1)).ToList(),0));
@@ -131,16 +154,18 @@ static class ReaderExperienceTests
   protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
   {
    using var json=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));var messages=json.RootElement.GetProperty("messages");
-   string system=messages[0].GetProperty("content").GetString()!;bool english=system.Contains("into English.");bool bilingual=system.Contains("align the two complete texts");
+   string system=messages[0].GetProperty("content").GetString()!;bool english=system.Contains("into English.");
    using var input=JsonDocument.Parse(messages[1].GetProperty("content").GetString()!);
-   var ids=bilingual?new[]{"b1"}:input.RootElement.GetProperty("blocks").EnumerateArray().Select(b=>b.GetProperty("id").GetString()!).ToArray();
-   string source=bilingual?input.RootElement.GetProperty("source").GetString()!:input.RootElement.GetProperty("blocks")[0].GetProperty("text").GetString()!;
-   string? knownZh=bilingual?input.RootElement.GetProperty("existingChinese").GetString():null;
-   host.Requests.Add(new(bilingual?"both":english?"en":"zh",ids,source,knownZh is not null));await Task.Delay(host.SlowSecond&&host.Requests.Count==2?1000:host.Delay,ct);
+   bool bilingual=input.RootElement.TryGetProperty("source",out _),align=input.RootElement.TryGetProperty("english",out _);
+   var ids=bilingual||align?new[]{"b1"}:input.RootElement.GetProperty("blocks").EnumerateArray().Select(b=>b.GetProperty("id").GetString()!).ToArray();
+   string source=align?input.RootElement.GetProperty("english").GetString()!:bilingual?input.RootElement.GetProperty("source").GetString()!:input.RootElement.GetProperty("blocks")[0].GetProperty("text").GetString()!;
+   string? knownZh=align?input.RootElement.GetProperty("chinese").GetString():bilingual?input.RootElement.GetProperty("existingChinese").GetString():null;
+   host.Requests.Add(new(align?"align":bilingual?"both":english?"en":"zh",ids,source,knownZh is not null));await Task.Delay((host.SlowSecond&&host.Requests.Count==2)||(host.SlowAlignment&&align)?400:host.Delay,ct);
    string en=string.Join(" ",Enumerable.Range(1,host.Count).Select(i=>$"EN b{i}. Read at a comfortable size. The whole paragraph should remain selectable and visible when you resize the window."));
    string zh=knownZh??string.Join(" ",Enumerable.Range(1,host.Count).Select(i=>$"中文 b{i}。调整字号后文字会自然换行。拖动窗口后保持位置，可以直接划选复制，末尾完整。"));
-   var content=bilingual?JsonSerializer.Serialize(new{english=input.RootElement.GetProperty("existingEnglish").GetString()??en,chinese=zh,alignment=Enumerable.Range(1,host.Count).Select(i=>new{en=$"EN b{i}.",zh=$"中文 b{i}。"})}):JsonSerializer.Serialize(new{translations=ids.Select(id=>new{id,text=english?en:zh})});
-   return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{choices=new[]{new{message=new{content}}}}),Encoding.UTF8,"application/json")};
+   bool truncated=align&&host.TruncateAlignment-->0;
+   var content=truncated?"{\"pairs\":[[":align?JsonSerializer.Serialize(new{pairs=Enumerable.Range(1,host.Count).Select(i=>new[]{$"EN b{i}.",$"中文 b{i}。"})}):bilingual?JsonSerializer.Serialize(new{english=input.RootElement.GetProperty("existingEnglish").GetString()??en,chinese=zh}):JsonSerializer.Serialize(new{translations=ids.Select(id=>new{id,text=english?en:zh})});
+   return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{choices=new[]{new{finish_reason=truncated?"length":"stop",message=new{content}}}}),Encoding.UTF8,"application/json")};
   }
  }
 }
