@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace ScreenLingo.Core;
 
@@ -45,45 +44,24 @@ public sealed class AppSettings
 
 public static class LayoutGrouper
 {
-    // Conservative vertical grouping: never concatenate neighbours on the same row.
-    // Short menu labels remain separate; wrapped prose can form a semantic paragraph.
+    // The user's selection is the translation unit. OCR boxes only determine
+    // reading order and the overall bounds; they never create separate blocks.
     public static List<TextRegion> Group(IEnumerable<OcrLine> source)
     {
         var lines = source.Where(l => !string.IsNullOrWhiteSpace(l.Text) && l.Width > 0 && l.Height > 0)
             .OrderBy(l => l.Y).ThenBy(l => l.X).ToList();
-        var groups = new List<List<OcrLine>>();
-        foreach (var line in lines)
+        if (lines.Count == 0) return [];
+        var x = lines.Min(l => l.X); var y = lines.Min(l => l.Y);
+        var text = lines[0].Text.Trim();
+        foreach (var l in lines.Skip(1))
         {
-            var best = groups.Select(g => (g, last: g[^1]))
-                .Where(p => CanJoin(p.last, line))
-                .OrderBy(p => line.Y - p.last.Y).FirstOrDefault();
-            if (best.g is null) groups.Add([line]); else best.g.Add(line);
+            var next = l.Text.Trim();
+            if (text.EndsWith('-') && text.Length > 1 && char.IsLetter(text[^2]) && char.IsLower(next[0]))
+                text = text[..^1] + next;
+            else text += IsCjk(text[^1]) && IsCjk(next[0]) ? next : " " + next;
         }
-        return groups.OrderBy(g => g[0].Y).ThenBy(g => g[0].X).Select((g, i) =>
-        {
-            var x = g.Min(l => l.X); var y = g.Min(l => l.Y);
-            var text = g[0].Text.Trim();
-            foreach (var l in g.Skip(1))
-            {
-                var next = l.Text.Trim();
-                if (text.EndsWith('-') && text.Length > 1 && char.IsLetter(text[^2]) && char.IsLower(next[0]))
-                    text = text[..^1] + next;
-                else text += IsCjk(text[^1]) && IsCjk(next[0]) ? next : " " + next;
-            }
-            return new TextRegion($"b{i + 1}", text, x, y, g.Max(l => l.X + l.Width) - x,
-                g.Max(l => l.Y + l.Height) - y, g.Average(l => l.Height), g.Min(l => l.Confidence));
-        }).ToList();
+        return [new TextRegion("b1", text, x, y, lines.Max(l => l.X + l.Width) - x,
+            lines.Max(l => l.Y + l.Height) - y, lines.Average(l => l.Height), lines.Min(l => l.Confidence))];
     }
-
-    static bool CanJoin(OcrLine a, OcrLine b)
-    {
-        var h = Math.Max(a.Height, b.Height);
-        var gap = b.Y - (a.Y + a.Height);
-        if (gap < -h * .15 || gap > h * .85 || b.Y < a.Y + a.Height * .7) return false;
-        if (Math.Min(a.Height, b.Height) / h < .88 || Math.Abs(a.X - b.X) > h * .85) return false;
-        if (a.Width < h * 8 || a.Text.Length < 18) return false;
-        if (Regex.IsMatch(a.Text.TrimEnd(), @"[。！？.!?:：;；]$") || Regex.IsMatch(b.Text, @"^\s*(?:[-•●]|\d+[.)、])")) return false;
-        return true;
-    }
-    static bool IsCjk(char c) => c is >= '\u3400' and <= '\u9fff';
+    static bool IsCjk(char c) => c is >= '\u3400' and <= '\u9fff' or >= '\u3000' and <= '\u303f' or >= '\uff00' and <= '\uffef';
 }

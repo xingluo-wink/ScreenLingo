@@ -25,6 +25,12 @@ static class Program
    Fixtures(root);var bitmap=new BitmapImage(new Uri(Path.Combine(root,"work","qa","desktop-light.png")));
    new Application().Run(new Window{Title="ScreenLingo QA fixture",Width=1240,Height=800,Content=new System.Windows.Controls.Image{Source=bitmap,Stretch=Stretch.Uniform},WindowStartupLocation=WindowStartupLocation.CenterScreen});return 0;
   }
+  int paragraphImage=Array.IndexOf(args,"--ocr-paragraph");
+  if(paragraphImage>=0)
+  {
+   try{OcrParagraph(root,args[paragraphImage+1]).GetAwaiter().GetResult();}catch(Exception ex){Check("OCR paragraph",false,ex.ToString());}
+   File.WriteAllText(Path.Combine(root,"work","qa","ocr-paragraph-report.json"),JsonSerializer.Serialize(new{passed=results.Count-failures,failed=failures,results},new JsonSerializerOptions{WriteIndented=true}));return failures==0?0:1;
+  }
   try
   {
    CoreTests();ApiTests().GetAwaiter().GetResult();if(!args.Contains("--core-only")){Fixtures(root);OcrTests(root).GetAwaiter().GetResult();}
@@ -38,12 +44,8 @@ static class Program
  static TextRegion Block(string id,string text)=>new(id,text,0,0,600,30,24,1);
  static void CoreTests()
  {
-  var wrapped=LayoutGrouper.Group([new("You should take the following",0,0,380,24,1),new("factors into account.",0,29,300,24,1)]);
-  Check("join wrapped sentence",wrapped.Count==1&&wrapped[0].Text=="You should take the following factors into account.");
-  Check("separate heading from body",LayoutGrouper.Group([new("Learn something new every day",27,27,463,44,1),new("Practice makes progress.",28,89,291,36,1)]).Count==2);
-  var columns=LayoutGrouper.Group([new("This is a very long left column",0,0,350,24,1),new("Right column paragraph starts",500,0,350,24,1),new("continued on the left.",0,30,320,24,1),new("continued on the right.",500,30,320,24,1)]);
-  Check("separate columns",columns.Count==2&&!columns[0].Text.Contains("Right"));
-  var labels=LayoutGrouper.Group([new("Apply",0,0,60,20,1),new("Cancel",0,25,70,20,1)]);Check("do not merge menus",labels.Count==2);
+  LayoutGroupingTests.Run(Check);
+  BilingualTests.Core(Check);
   var parsed=TranslationService.ParseTranslations("```json\n{\"translations\":[{\"id\":\"b2\",\"text\":\"二\"},{\"id\":\"b1\",\"text\":\"一\"}]}\n```",["b1","b2"]);Check("IDs survive reordering",parsed["b1"]=="一");
   Throws("reject missing translation",()=>TranslationService.ParseTranslations("{\"translations\":[]}",["b1"]));
   Throws("reject duplicate IDs",()=>TranslationService.ParseTranslations("[{\"id\":\"b1\",\"text\":\"x\"},{\"id\":\"b1\",\"text\":\"y\"}]",["b1","b2"]));
@@ -54,8 +56,18 @@ static class Program
   string encrypted=KeyVault.Protect("test-only-key-123");Check("DPAPI roundtrip",encrypted!="test-only-key-123"&&KeyVault.Unprotect(encrypted)=="test-only-key-123");
   Throws("invalid hotkey",()=>Native.ParseHotkey("Q"));Throws("reserved F12",()=>Native.ParseHotkey("Ctrl+F12"));
  }
+ static async Task OcrParagraph(string root,string image)
+ {
+  using var ocr=new OcrClient(Path.Combine(root,"release","ScreenLingo"));
+  var response=await ocr.RecognizeAsync(await File.ReadAllBytesAsync(image),CancellationToken.None);
+  var regions=LayoutGrouper.Group(response.Lines);
+  Check("local OCR detects multiple lines",response.Error is null&&response.Lines.Count>=2,response);
+  var ordered=response.Lines.OrderBy(l=>l.Y+l.Height/2).ThenBy(l=>l.X).Select(l=>l.Text.Trim());
+  Check("local OCR paragraph retains line order",regions.Count==1&&regions[0].Text==string.Join(" ",ordered),regions);
+ }
  static async Task ApiTests()
  {
+  await BilingualTests.Protocols(Check);
   foreach(var protocol in Enum.GetValues<ApiProtocol>())
   {
    var handler=new FakeHandler(protocol);using var service=new TranslationService(handler);

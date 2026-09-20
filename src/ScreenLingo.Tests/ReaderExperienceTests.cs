@@ -41,7 +41,9 @@ static class ReaderExperienceTests
    window.Left=230;window.Top=170;window.Width=740;window.Height=430;await Task.Delay(30);window.UseManualBounds();var bounds=Native.ReaderBounds(window);
    await window.SelectModeAsync(ReadingMode.Bilingual);await Task.Delay(30);
    check("both complete languages appear in one selectable document",window.Reader.PlainText.Contains("EN b20")&&window.Reader.PlainText.Contains("中文 b20")&&!window.Reader.PlainText.Contains("尚无译文"),null);
-   int calls=host.Requests.Count;check("both languages fetched once in API batches",calls==4,new{calls});
+   int calls=host.Requests.Count;check("whole selection and bilingual alignment share one request",calls==1&&host.Requests[0].Ids.Length==1&&host.Requests[0].Input.Contains("Original 20."),new{calls});
+   LinkedSelectionTests.SelectSnippet(window.Reader,"中文 b1。");
+   check("reader uses returned alignment without sending selection requests",window.Reader.LinkedSelectionLabel=="对应英文：EN b1."&&host.Requests.Count==calls,null);
    window.Reader.SelectAll();string selected=window.Reader.Selection.Text;var document=window.Reader.Document;
    window.SetReadingFontSize(32);await Task.Delay(30);
    check("font adjustment preserves document and selection",ReferenceEquals(document,window.Reader.Document)&&window.Reader.Selection.Text==selected&&window.Reader.Document.FontSize==32,null);
@@ -63,11 +65,11 @@ static class ReaderExperienceTests
   var partialHost=new FakeHost(20){SlowSecond=true};var partial=NewWindow(partialHost);partial.Show();
   try
   {
-   await Ready(partial);var translation=partial.SelectModeAsync(ReadingMode.Chinese);
-   await Until(()=>partialHost.Requests.Count>=2&&partial.Reader.PlainText.Contains("中文 b1"));partial.CancelTranslation();await translation;
-   check("cancel preserves already completed paragraphs",!partial.IsTranslating&&partial.Reader.PlainText.Contains("中文 b1")&&!partial.Reader.PlainText.Contains("中文 b20"),null);
+   await Ready(partial);await partial.SelectModeAsync(ReadingMode.Chinese);var translation=partial.SelectModeAsync(ReadingMode.Bilingual);
+   await Until(()=>partialHost.Requests.Count>=2);partial.CancelTranslation();await translation;
+   check("cancel bilingual generation preserves the complete existing translation",!partial.IsTranslating&&partial.Reader.PlainText.Contains("中文 b20")&&!partial.Reader.PlainText.Contains("EN b20"),null);
    partialHost.SlowSecond=false;int before=partialHost.Requests.Count;await partial.TranslateAsync();
-   check("retry requests only the missing paragraphs",partialHost.Requests.Count==before+1&&partialHost.Requests[^1].Ids.Length==4&&partial.Reader.PlainText.Contains("中文 b20"),partialHost.Requests[^1]);
+   check("retry reuses the existing language and sends one whole selection",partialHost.Requests.Count==before+1&&partialHost.Requests[^1].Ids.Length==1&&partialHost.Requests[^1].KnownChinese&&partial.Reader.PlainText.Contains("EN b20"),partialHost.Requests[^1]);
   }
   finally{partial.Close();}
 
@@ -89,15 +91,16 @@ static class ReaderExperienceTests
   {
    await Ready(sample);await sample.SelectModeAsync(ReadingMode.Bilingual);await Task.Delay(40);
    check("short bilingual result fits without internal clipping",sample.Reader.ExtentHeight<=sample.Reader.ViewportHeight+2,new{sample.Reader.ExtentHeight,sample.Reader.ViewportHeight});
-   Save((FrameworkElement)sample.Content,Path.Combine(work,"reader-0.2.0-stacked.png"));
+   Save((FrameworkElement)sample.Content,Path.Combine(work,"reader-0.3.0-stacked.png"));
    sample.Width=950;sample.Height=450;sample.UseManualBounds();sampleHost.Settings.BilingualSideBySide=true;sample.SetReadingFontSize(20);await Task.Delay(40);
    check("wide bilingual layout contains both columns",sample.Reader.UsesColumns&&sample.Reader.Document.Blocks.FirstBlock is Table&&sample.Reader.PlainText.Contains("EN b1")&&sample.Reader.PlainText.Contains("中文 b1"),null);
-   Save((FrameworkElement)sample.Content,Path.Combine(work,"reader-0.2.0-columns.png"));
+   Save((FrameworkElement)sample.Content,Path.Combine(work,"reader-0.3.0-columns.png"));
    sample.Width=550;await Task.Delay(50);check("resizing narrow safely returns to stacked bilingual text",!sample.Reader.UsesColumns&&sample.Reader.PlainText.Contains("中文 b1"),null);
-   sample.SetReadingFontSize(40);var large=sample.CreateExportContent(sample.Reader.ActualWidth);Save(large,Path.Combine(work,"reader-0.2.0-font40.png"));
+   sample.SetReadingFontSize(40);var large=sample.CreateExportContent(sample.Reader.ActualWidth);Save(large,Path.Combine(work,"reader-0.3.0-font40.png"));
    check("large-font export includes final characters",large.PlainText.EndsWith("末尾完整。")&&large.ActualHeight>100,null);
   }
   finally{sample.Close();}
+  await LinkedSelectionTests.Run(check,work);
  }
  static OverlayWindow NewWindow(FakeHost host)
  {
@@ -113,11 +116,12 @@ static class ReaderExperienceTests
  {
   visual.UpdateLayout();var bitmap=new RenderTargetBitmap(Math.Max(1,(int)Math.Ceiling(visual.ActualWidth)),Math.Max(1,(int)Math.Ceiling(visual.ActualHeight)),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);File.WriteAllBytes(path,Capture.Png(bitmap));
  }
- sealed record Request(string Language,string[] Ids);
+ sealed record Request(string Language,string[] Ids,string Input,bool KnownChinese=false);
  sealed class FakeHost(int count):IReaderHost
  {
   public AppSettings Settings{get;}=new(){Profiles=[new(){BaseUrl="https://example.com/v1",Model="mock-reader"}],ReaderTopmost=false};
   public List<Request> Requests{get;}=[];public bool SlowSecond;public int Delay=12;
+  public int Count=>count;
   public void SaveSettings(){}public void ShowSettings(){}
   public Task<OcrResponse> RecognizeAsync(byte[] image,CancellationToken token)=>Task.FromResult(new OcrResponse(Enumerable.Range(1,count).Select(i=>new OcrLine($"Original {i}.",20,i*40,180,24,1)).ToList(),0));
   public TranslationService CreateTranslationService()=>new(new Handler(this));
@@ -127,10 +131,15 @@ static class ReaderExperienceTests
   protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
   {
    using var json=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));var messages=json.RootElement.GetProperty("messages");
-   bool english=messages[0].GetProperty("content").GetString()!.Contains("into English.");
-   using var input=JsonDocument.Parse(messages[1].GetProperty("content").GetString()!);var ids=input.RootElement.GetProperty("blocks").EnumerateArray().Select(b=>b.GetProperty("id").GetString()!).ToArray();
-   host.Requests.Add(new(english?"en":"zh",ids));await Task.Delay(host.SlowSecond&&host.Requests.Count==2?1000:host.Delay,ct);
-   var content=JsonSerializer.Serialize(new{translations=ids.Select(id=>new{id,text=english?$"EN {id}. Read at a comfortable size. The whole paragraph should remain selectable and visible when you resize the window.":$"中文 {id}。调整字号后文字会自然换行。拖动窗口后保持位置，可以直接划选复制，末尾完整。"})});
+   string system=messages[0].GetProperty("content").GetString()!;bool english=system.Contains("into English.");bool bilingual=system.Contains("align the two complete texts");
+   using var input=JsonDocument.Parse(messages[1].GetProperty("content").GetString()!);
+   var ids=bilingual?new[]{"b1"}:input.RootElement.GetProperty("blocks").EnumerateArray().Select(b=>b.GetProperty("id").GetString()!).ToArray();
+   string source=bilingual?input.RootElement.GetProperty("source").GetString()!:input.RootElement.GetProperty("blocks")[0].GetProperty("text").GetString()!;
+   string? knownZh=bilingual?input.RootElement.GetProperty("existingChinese").GetString():null;
+   host.Requests.Add(new(bilingual?"both":english?"en":"zh",ids,source,knownZh is not null));await Task.Delay(host.SlowSecond&&host.Requests.Count==2?1000:host.Delay,ct);
+   string en=string.Join(" ",Enumerable.Range(1,host.Count).Select(i=>$"EN b{i}. Read at a comfortable size. The whole paragraph should remain selectable and visible when you resize the window."));
+   string zh=knownZh??string.Join(" ",Enumerable.Range(1,host.Count).Select(i=>$"中文 b{i}。调整字号后文字会自然换行。拖动窗口后保持位置，可以直接划选复制，末尾完整。"));
+   var content=bilingual?JsonSerializer.Serialize(new{english=input.RootElement.GetProperty("existingEnglish").GetString()??en,chinese=zh,alignment=Enumerable.Range(1,host.Count).Select(i=>new{en=$"EN b{i}.",zh=$"中文 b{i}。"})}):JsonSerializer.Serialize(new{translations=ids.Select(id=>new{id,text=english?en:zh})});
    return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{choices=new[]{new{message=new{content}}}}),Encoding.UTF8,"application/json")};
   }
  }

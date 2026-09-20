@@ -22,6 +22,8 @@ public sealed class OverlayWindow:Window
  readonly Button originalButton,copyButton,cancelButton,retryButton;
  readonly CancellationTokenSource lifetime=new();CancellationTokenSource? translating;Task? recognition;
  readonly Dictionary<string,Dictionary<string,string>> cache=[];
+ readonly Dictionary<string,BilingualAlignment> alignmentCache=[];
+ BilingualAlignment? alignment;string lastStatus="正在识别选区…";
  List<TextRegion> regions=[];Dictionary<string,string> chinese=[],english=[];
  string profileKey="";int generation;bool closed,busy,requested,peek,manualBounds,autoFitted,renderQueued;
  Preview preview;HwndSource? source;
@@ -55,6 +57,7 @@ public sealed class OverlayWindow:Window
   var feedback=new StackPanel{Orientation=Orientation.Horizontal};feedback.Children.Add(cancelButton);feedback.Children.Add(retryButton);Grid.SetColumn(feedback,1);footer.Children.Add(feedback);Grid.SetRow(footer,2);root.Children.Add(footer);
   AutomationProperties.SetName(reader,"可选择复制的阅读正文");AutomationProperties.SetAutomationId(reader,"ReaderBody");
   reader.SizeChanged+=(_,_)=>QueueRenderIfLayoutChanged();
+  reader.LinkedSelectionChanged+=(_,_)=>RefreshStatus();
   reader.PreviewMouseWheel+=(_,e)=>{if(Keyboard.Modifiers==ModifierKeys.Control){ChangeFont(e.Delta>0?1:-1);e.Handled=true;}};
   SourceInitialized+=(_,_)=>
   {
@@ -70,7 +73,7 @@ public sealed class OverlayWindow:Window
   Closed+=(_,_)=>
   {
    closed=true;generation++;lifetime.Cancel();translating?.Cancel();if(openMenu is not null)openMenu.IsOpen=false;source?.RemoveHook(WindowMessages);
-   canvas.Clear();imageView.Child=null;reader.Document.Blocks.Clear();cache.Clear();Content=null;
+   canvas.Clear();imageView.Child=null;reader.SetAlignment(null);reader.Document.Blocks.Clear();cache.Clear();alignmentCache.Clear();Content=null;
   };
  }
  static Button CompactButton(string text,Action action)
@@ -109,7 +112,8 @@ public sealed class OverlayWindow:Window
   if(message==0x0231){manualBounds=true;autoFitted=true;}
   if(message==0x0232)UseManualBounds();return IntPtr.Zero;
  }
- void SetStatus(string text){status.Text=text;status.ToolTip=text;}
+ void SetStatus(string text){lastStatus=text;RefreshStatus();}
+ void RefreshStatus(){string text=Bilingual&&!busy&&reader.LinkedSelectionLabel.Length>0?reader.LinkedSelectionLabel:lastStatus;status.Text=text;status.ToolTip=text;}
  void SavePreferences(){try{host.SaveSettings();}catch(Exception ex){SetStatus("偏好未能保存："+ex.Message);}}
  void UpdateModeButtons()
  {
@@ -143,6 +147,7 @@ public sealed class OverlayWindow:Window
  void Render()
  {
   if(closed)return;reader.Present(regions,chinese,english,CurrentMode,EffectiveColumns,host.Settings.ReadingFontSize,!requested||!HasTranslations,busy);
+  reader.SetAlignment(alignment);RefreshStatus();
   canvas.Regions=regions;canvas.Translations=CurrentTranslations;copyButton.IsEnabled=regions.Count>0;UpdatePreview();
  }
  void UpdatePreview()
@@ -166,7 +171,7 @@ public sealed class OverlayWindow:Window
   {
    var response=await host.RecognizeAsync(Capture.Png(capture.Image),lifetime.Token);if(closed)return;
    if(response.Error is not null)throw new InvalidOperationException(response.Error);
-   regions=LayoutGrouper.Group(response.Lines);Render();SetStatus(regions.Count==0?"未识别到文字，可保存原图或重新框选。":"已识别原文 · 选择中文、English 或双语开始翻译");
+   regions=LayoutGrouper.Group(response.Lines);Render();SetStatus(regions.Count==0?"未识别到文字，可保存原图或重新框选。":"已识别整个选区 · 选择中文、English 或双语开始翻译");
   }
   catch(OperationCanceledException){}
   catch(Exception ex){if(!closed)SetStatus(ex.Message);}
@@ -185,26 +190,41 @@ public sealed class OverlayWindow:Window
    if(profileKey!=fingerprint)
    {
     profileKey=fingerprint;chinese=cache.TryGetValue(fingerprint+"zh",out var zh)?new(zh):[];english=cache.TryGetValue(fingerprint+"en",out var en)?new(en):[];
+    alignment=alignmentCache.GetValueOrDefault(fingerprint);
    }
    requested=true;Render();var watch=Stopwatch.StartNew();bool sent=false;using var api=host.CreateTranslationService();
-   foreach(string language in selected==ReadingMode.Bilingual?new[]{"en","zh"}:new[]{selected==ReadingMode.English?"en":"zh"})
+   var selection=regions[0];
+   if(selected==ReadingMode.Bilingual)
    {
-    var current=language=="zh"?chinese:english;var missing=regions.Where(r=>!current.ContainsKey(r.Id)).ToList();if(missing.Count==0)continue;
-    bool finished=false;sent=true;string label=language=="zh"?"中文":"英文";SetStatus($"正在翻译{label}… 已有内容可以继续阅读");
-    void Merge(Dictionary<string,string> part)
+    bool needsAlignment=profile.Protocol!=ApiProtocol.QwenMt&&(alignment is null||alignment.Phrases.Count==0);
+    if(!chinese.ContainsKey(selection.Id)||!english.ContainsKey(selection.Id)||needsAlignment)
     {
-     foreach(var pair in part)current[pair.Key]=pair.Value;cache[fingerprint+language]=new(current);
-     while(cache.Count>6)cache.Remove(cache.Keys.First());
+     sent=true;SetStatus("正在生成完整双语和词组对应关系…");
+     var result=await api.TranslateBilingualAsync(profile,key,selection,english.GetValueOrDefault(selection.Id),chinese.GetValueOrDefault(selection.Id),token);
+     token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
+     english[selection.Id]=result.English;chinese[selection.Id]=result.Chinese;alignment=result.Alignment;
+     cache[fingerprint+"en"]=new(english);cache[fingerprint+"zh"]=new(chinese);alignmentCache[fingerprint]=alignment;Render();
     }
-    var progress=new Progress<Dictionary<string,string>>(part=>
-    {
-     if(closed||finished||mine!=generation||token.IsCancellationRequested)return;Merge(part);Render();SetStatus($"正在翻译{label} · {current.Count}/{regions.Count}");
-    });
-    Dictionary<string,string> result;
-    try{result=await api.TranslateAsync(profile,key,missing,language,progress,token);}finally{finished=true;}
-    token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;Merge(result);Render();
    }
-   SetStatus((selected==ReadingMode.Bilingual?"中英对照":selected==ReadingMode.Chinese?"中文译文":"英文译文")+(sent?$" · {watch.Elapsed.TotalSeconds:F1} 秒":" · 已复用译文")+" · 可划选复制文字");
+   else
+   {
+    string language=selected==ReadingMode.English?"en":"zh";var current=language=="zh"?chinese:english;
+    if(!current.ContainsKey(selection.Id))
+    {
+     sent=true;SetStatus("正在整体翻译选区…");var result=await api.TranslateAsync(profile,key,regions,language,null,token);
+     token.ThrowIfCancellationRequested();if(closed||mine!=generation)return;
+     foreach(var pair in result)current[pair.Key]=pair.Value;cache[fingerprint+language]=new(current);Render();
+    }
+   }
+   while(cache.Count>6)cache.Remove(cache.Keys.First());while(alignmentCache.Count>3)alignmentCache.Remove(alignmentCache.Keys.First());
+   string hint="可划选复制文字";
+   if(selected==ReadingMode.Bilingual)
+   {
+    if(alignment?.Phrases.Count>0)hint="选中词句，另一语言同步高亮";
+    else if(profile.Protocol==ApiProtocol.QwenMt)hint="Qwen-MT 接口仅提供翻译；通用模型接口支持联动高亮";
+    else{hint="模型未提供有效的词组对应关系，可重试；正文可正常复制";retryButton.Visibility=Visibility.Visible;}
+   }
+   SetStatus((selected==ReadingMode.Bilingual?"中英对照":selected==ReadingMode.Chinese?"中文译文":"英文译文")+(sent?$" · {watch.Elapsed.TotalSeconds:F1} 秒":" · 已复用译文")+" · "+hint);
    if(!manualBounds&&!autoFitted&&reader.VerticalOffset<1&&reader.Selection.IsEmpty)FitToContent();
   }
   catch(OperationCanceledException){if(!closed&&mine==generation)SetStatus("已停止翻译，已完成内容已保留。");}

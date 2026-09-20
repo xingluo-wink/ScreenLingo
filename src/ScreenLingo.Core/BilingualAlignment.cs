@@ -1,0 +1,73 @@
+using System.Text.Json;
+
+namespace ScreenLingo.Core;
+
+public readonly record struct TextSpan(int Start, int Length)
+{
+    public int End => Start + Length;
+    public bool Overlaps(TextSpan other) => Start < other.End && other.Start < End;
+}
+public record AlignedPhrase(TextSpan English, TextSpan Chinese);
+public record BilingualResult(string English, string Chinese, BilingualAlignment Alignment);
+
+public sealed class BilingualAlignment(string english, string chinese, IReadOnlyList<AlignedPhrase> phrases)
+{
+    public string English { get; } = english;
+    public string Chinese { get; } = chinese;
+    public IReadOnlyList<AlignedPhrase> Phrases { get; } = phrases;
+
+    public IReadOnlyList<TextSpan> Match(string language, int start, int length)
+    {
+        if (length <= 0 || start < 0 || language is not ("en" or "zh")) return [];
+        var selection = new TextSpan(start, length);
+        var hits = Phrases.Where(p => (language == "en" ? p.English : p.Chinese).Overlaps(selection))
+            .Select(p => language == "en" ? p.Chinese : p.English).Distinct().OrderBy(s => s.Start);
+        var merged = new List<TextSpan>();
+        foreach (var hit in hits)
+        {
+            if (merged.Count > 0 && merged[^1].End >= hit.Start)
+                merged[^1] = new(merged[^1].Start, Math.Max(merged[^1].End, hit.End) - merged[^1].Start);
+            else merged.Add(hit);
+        }
+        return merged;
+    }
+
+    public static BilingualAlignment Parse(JsonElement root, string english, string chinese)
+    {
+        var pairs = new List<AlignedPhrase>();
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("alignment", out var items) || items.ValueKind != JsonValueKind.Array)
+            return new(english, chinese, pairs);
+        foreach (var item in items.EnumerateArray().Take(4000))
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var en = Locate(item, "en", english); var zh = Locate(item, "zh", chinese);
+            if (en is not null && zh is not null) pairs.Add(new(en.Value, zh.Value));
+        }
+        return new(english, chinese, pairs.Distinct().ToArray());
+    }
+
+    static TextSpan? Locate(JsonElement item, string language, string text)
+    {
+        if (!item.TryGetProperty(language, out var value) || value.ValueKind != JsonValueKind.String) return null;
+        string phrase = value.GetString()!;
+        if (string.IsNullOrWhiteSpace(phrase)) return null;
+        int occurrence = 0;
+        if (item.TryGetProperty(language + "Occurrence", out var ordinal) &&
+            (ordinal.ValueKind != JsonValueKind.Number || !ordinal.TryGetInt32(out occurrence) || occurrence < 1)) return null;
+        var matches = new List<int>();
+        for (int offset = 0; offset <= text.Length - phrase.Length;)
+        {
+            int found = text.IndexOf(phrase, offset, StringComparison.Ordinal);
+            if (found < 0) break;
+            int end = found + phrase.Length;
+            bool insideWord = language == "en" &&
+                ((char.IsLetterOrDigit(phrase[0]) && found > 0 && char.IsLetterOrDigit(text[found - 1])) ||
+                 (char.IsLetterOrDigit(phrase[^1]) && end < text.Length && char.IsLetterOrDigit(text[end])));
+            if (!insideWord) matches.Add(found);
+            offset = end;
+        }
+        // Ambiguous repetitions without an occurrence number are not guessed.
+        if (occurrence == 0) return matches.Count == 1 ? new(matches[0], phrase.Length) : null;
+        return occurrence <= matches.Count ? new(matches[occurrence - 1], phrase.Length) : null;
+    }
+}
